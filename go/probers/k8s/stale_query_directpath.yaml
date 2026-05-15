@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: spanner-ns
+  name: irahul-go-stale-query-directpath
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: irahul-go-stale-query-directpath
+  template:
+    metadata:
+      labels:
+        app: irahul-go-stale-query-directpath
+    spec:
+      containers:
+        - name: stale-query-directpath
+          image: us-central1-docker.pkg.dev/span-cloud-testing/irahul-images/irahul-go-client:v1.91.0
+          imagePullPolicy: Always
+          ports:
+            - name: pprof
+              containerPort: 6060
+              protocol: TCP
+          resources:
+            requests:
+              memory: "400Mi"
+              cpu: "0.4"
+            limits:
+              memory: "400Mi"
+              cpu: "0.4"
+          env:
+            - name: PROBE_TYPE
+              value: "stale_query"
+            - name: QPS
+              value: "10"
+            # DCP/load knobs. Uncomment when testing high concurrent streams.
+#            - name: START_QPS
+#              value: "100"
+#            - name: END_QPS
+#              value: "5000"
+#            - name: STEP_QPS_PERCENT
+#              value: "25"
+#            - name: QPS_STEP_INTERVAL_SECONDS
+#              value: "60"
+#            - name: MAX_INFLIGHT
+#              value: "512"
+            - name: OTEL_SERVICE_NAME
+              value: "irahul-go-stale-query-directpath"
+            - name: GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS
+              value: "true"
+#            - name: PPROF_ENABLED
+#              value: "true"
+#            - name: PPROF_ADDR
+#              value: ":6060"
