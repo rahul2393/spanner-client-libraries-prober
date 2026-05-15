@@ -36,6 +36,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -94,6 +95,27 @@ final class Main {
   private static final Tracer tracer = openTelemetrySdk.getTracer("jloadtest");
   private static final Meter meter = openTelemetrySdk.getMeter("jloadtest");
   private static final Logger logger = Logger.getLogger(Main.class.getName());
+  private static final List<Double> LATENCY_BUCKETS_MS =
+      Arrays.asList(
+          0.001, 0.002, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05,
+          0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4,
+          0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.25, 1.5,
+          1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5,
+          3.75, 4.0, 4.25, 4.5, 4.75, 5.0, 5.5, 6.0,
+          6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0,
+          10.5, 11.0, 11.5, 12.0, 12.5, 13.0, 13.5, 14.0,
+          14.5, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0,
+          22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0,
+          30.0, 32.5, 35.0, 37.5, 40.0, 42.5, 45.0, 47.5,
+          50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0,
+          90.0, 95.0, 100.0, 125.0, 150.0, 175.0, 200.0, 225.0,
+          250.0, 275.0, 300.0, 325.0, 350.0, 375.0, 400.0, 425.0,
+          450.0, 475.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0,
+          1100.0, 1200.0, 1300.0, 1400.0, 1500.0, 1600.0, 1700.0, 1800.0,
+          1900.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0, 4500.0, 5000.0,
+          6000.0, 7000.0, 8000.0, 9000.0, 10000.0, 20000.0, 30000.0, 40000.0,
+          50000.0, 60000.0, 70000.0, 80000.0, 90000.0, 100000.0, 110000.0, 120000.0,
+          150000.0, 180000.0, 210000.0, 240000.0, 270000.0, 300000.0);
   private static final LongCounter requestCounter =
       meter
           .counterBuilder("jop_count")
@@ -106,17 +128,7 @@ final class Main {
           .histogramBuilder("jlatency")
           .setDescription("Latency of requests processed by MySampleApp")
           .setUnit("ms")
-          .setExplicitBucketBoundariesAdvice(
-              Arrays.asList(
-                  0.0, 0.01, 0.05, 0.1, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.575, 0.6,
-                  0.625, 0.65, 0.675, 0.7, 0.725, 0.75, 0.775, 0.8, 0.825, 0.85, 0.875, 0.9, 0.925,
-                  0.95, 0.975, 1.0, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.55,
-                  1.6, 1.65, 1.7, 1.75, 1.8, 1.85, 1.9, 1.95, 2.0, 2.05, 2.1, 2.15, 2.2, 2.25, 2.3,
-                  2.35, 2.4, 2.45, 2.5, 2.6, 2.7, 2.8, 2.9, 3.0, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7,
-                  3.8, 3.9, 4.0, 4.2, 4.5, 4.8, 5.0, 5.5, 6.0, 7.0, 8.0, 10.0, 13.0, 16.0, 20.0,
-                  25.0, 30.0, 40.0, 50.0, 65.0, 80.0, 100.0, 130.0, 160.0, 200.0, 250.0, 300.0,
-                  400.0, 500.0, 650.0, 800.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0, 50000.0,
-                  100000.0))
+          .setExplicitBucketBoundariesAdvice(LATENCY_BUCKETS_MS)
           .build();
 
   private static final String HOST = getHostName();
