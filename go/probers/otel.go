@@ -70,9 +70,29 @@ func initializeOpenTelemetry(ctx context.Context, cfg config) (*otelRuntime, err
 		return noop, nil
 	}
 
+	resourceLocation := getEnvAny([]string{"OTEL_RESOURCE_LOCATION", "CLOUD_REGION", "GOOGLE_CLOUD_REGION"}, "global")
+	resourceNamespace := getEnvAny([]string{"POD_NAMESPACE", "OTEL_RESOURCE_NAMESPACE"}, cfg.otelServiceName)
+	if resourceNamespace == "" {
+		resourceNamespace = cfg.otelServiceName
+	}
+	resourceTaskID := getEnvAny([]string{"POD_NAME", "HOSTNAME"}, host)
+	if resourceTaskID == "" {
+		resourceTaskID = host
+	}
 	res := resource.NewWithAttributes(
 		"",
 		attribute.String("service.name", cfg.otelServiceName),
+		attribute.String("gcp.resource_type", "generic_task"),
+		attribute.String("location", resourceLocation),
+		attribute.String("namespace", resourceNamespace),
+		attribute.String("job", cfg.otelServiceName),
+		attribute.String("task_id", resourceTaskID),
+	)
+	fmt.Printf("otel_resource_debug monitored_resource=generic_task location=%s namespace=%s job=%s task_id=%s\n",
+		resourceLocation,
+		resourceNamespace,
+		cfg.otelServiceName,
+		resourceTaskID,
 	)
 
 	traceOpts := []gcptrace.Option{gcptrace.WithProjectID(cfg.otelProjectID)}
@@ -92,6 +112,7 @@ func initializeOpenTelemetry(ctx context.Context, cfg config) (*otelRuntime, err
 
 	metricOpts := []gcpmetric.Option{
 		gcpmetric.WithProjectID(cfg.otelProjectID),
+		gcpmetric.WithMonitoredResourceDescription("generic_task", []string{"location", "namespace", "job", "task_id"}),
 		gcpmetric.WithMetricDescriptorTypeFormatter(func(m otelmetricdata.Metrics) string {
 			prefix := strings.TrimSuffix(cfg.otelMetricPrefix, "/")
 			name := strings.ReplaceAll(m.Name, ".", "/")

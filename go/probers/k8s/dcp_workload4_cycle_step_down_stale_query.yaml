@@ -30,6 +30,14 @@ spec:
               memory: "4Gi"
               cpu: "8"
           env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: PROBE_TYPE
               value: "stale_query"
             - name: LOAD_MODE
@@ -60,6 +68,8 @@ spec:
               value: "50"
             - name: SPANNER_DCP_MIN_RPC_PER_CHANNEL
               value: "5"
+            - name: SPANNER_DCP_DEBUG_LOGS
+              value: "true"
             - name: OTEL_ENABLED
               value: "true"
             - name: OTEL_PROJECT_ID
@@ -70,6 +80,17 @@ spec:
               value: "custom.googleapis.com/irahul"
             - name: OTEL_METRIC_EXPORT_INTERVAL_SECONDS
               value: "10"
+            - name: OTEL_RESOURCE_LOCATION
+              value: "global"
+            # DCP custom metric types emitted by this workload:
+            # - custom.googleapis.com/irahul/spanner/dcp/active_channel_count
+            # - custom.googleapis.com/irahul/spanner/dcp/draining_channel_count
+            # - custom.googleapis.com/irahul/spanner/dcp/channel_stream_load
+            # - custom.googleapis.com/irahul/spanner/dcp/channel_operation_refs
+            # - custom.googleapis.com/irahul/spanner/dcp/selection_count
+            # - custom.googleapis.com/irahul/spanner/dcp/scale_up_count
+            # - custom.googleapis.com/irahul/spanner/dcp/scale_up_added_channels
+            # - custom.googleapis.com/irahul/spanner/dcp/scale_down_count
 #            - name: GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS
 #              value: "true"
 #            - name: GOOGLE_SPANNER_ENABLE_GCP_FALLBACK

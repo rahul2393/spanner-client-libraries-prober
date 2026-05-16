@@ -147,6 +147,14 @@ func applyDynamicChannelPoolConfig(clientConfig *spanner.ClientConfig, cfg confi
 	setStructInt(v, "DCPMaxChannels", cfg.dcpMaxChannels)
 	setStructFloat(v, "DCPMaxRPCPerChannel", cfg.dcpMaxRPCPerChannel)
 	setStructFloat(v, "DCPMinRPCPerChannel", cfg.dcpMinRPCPerChannel)
+	log.Printf("spanner_dcp_config_applied=true dcp_enabled=%t dcp_initial=%d dcp_min=%d dcp_max=%d dcp_max_rpc=%.2f dcp_min_rpc=%.2f",
+		getStructBool(v, "DCPEnabled"),
+		getStructInt(v, "DCPInitialChannels"),
+		getStructInt(v, "DCPMinChannels"),
+		getStructInt(v, "DCPMaxChannels"),
+		getStructFloat(v, "DCPMaxRPCPerChannel"),
+		getStructFloat(v, "DCPMinRPCPerChannel"),
+	)
 }
 
 func setStructBool(v reflect.Value, name string, value bool) bool {
@@ -182,4 +190,28 @@ func setStructFloat(v reflect.Value, name string, value float64) bool {
 	}
 	log.Printf("spanner_dcp_field_ignored=true field=%s value=%f", name, value)
 	return false
+}
+
+func getStructBool(v reflect.Value, name string) bool {
+	f := v.FieldByName(name)
+	if f.IsValid() && f.Kind() == reflect.Bool {
+		return f.Bool()
+	}
+	return false
+}
+
+func getStructInt(v reflect.Value, name string) int64 {
+	f := v.FieldByName(name)
+	if f.IsValid() && f.Kind() >= reflect.Int && f.Kind() <= reflect.Int64 {
+		return f.Int()
+	}
+	return 0
+}
+
+func getStructFloat(v reflect.Value, name string) float64 {
+	f := v.FieldByName(name)
+	if f.IsValid() && (f.Kind() == reflect.Float32 || f.Kind() == reflect.Float64) {
+		return f.Float()
+	}
+	return 0
 }
