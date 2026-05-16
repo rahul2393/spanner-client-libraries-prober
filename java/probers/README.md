@@ -142,6 +142,6 @@ env:
 
 See Kubernetes examples:
 
-- `k8s/dcp_workload1_step_up_stale_query.yaml`
-- `k8s/dcp_workload2_burst_stale_query.yaml`
-- `k8s/dcp_workload4_cycle_step_down_stale_query.yaml`
+- `k8s/dcp_workload1_step_up_stale_query.yaml` — ramp-up scale-up workload
+- `k8s/dcp_workload2_burst_stale_query.yaml` — burst scale-up workload
+- `k8s/dcp_workload4_cycle_step_down_stale_query.yaml` — ramp-cycle scale-up/scale-down workload

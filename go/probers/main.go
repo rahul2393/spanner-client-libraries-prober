@@ -32,6 +32,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize OpenTelemetry: %v", err)
 	}
+	if cfg.enableOTEL {
+		spanner.EnableOpenTelemetryMetrics()
+	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()

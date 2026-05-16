@@ -66,6 +66,22 @@ The Go runner already uses goroutine-per-probe execution. The dispatcher submits
 
 If the prober is built against a Spanner client version without `DynamicChannelPoolConfig`, `SPANNER_DCP_ENABLED=true` is ignored and the prober logs `spanner_dcp_config_ignored=true`.
 
+### DCP Spanner client metrics
+
+DCP metrics are OpenTelemetry custom metrics, not built-in Cloud Spanner metrics. They are exported when `OTEL_ENABLED=true` and `SPANNER_DCP_ENABLED=true`.
+
+With the default `OTEL_METRIC_PREFIX=custom.googleapis.com/irahul`, look for metric types such as:
+
+- `custom.googleapis.com/irahul/spanner/dcp/active_channel_count`
+- `custom.googleapis.com/irahul/spanner/dcp/draining_channel_count`
+- `custom.googleapis.com/irahul/spanner/dcp/channel_stream_load`
+- `custom.googleapis.com/irahul/spanner/dcp/channel_operation_refs`
+- `custom.googleapis.com/irahul/spanner/dcp/selection_count`
+- `custom.googleapis.com/irahul/spanner/dcp/scale_up_count`
+- `custom.googleapis.com/irahul/spanner/dcp/scale_down_count`
+
+`active_channel_count` and load gauges appear after the first export interval. Scale-up and scale-down counters appear only after workload pressure triggers those events. Cloud Monitoring can take a few minutes before a new custom metric type is searchable.
+
 QPS controller modes:
 
 - default ramp: `START_QPS` ramps up to `END_QPS` by `STEP_QPS_PERCENT`, then stays at `END_QPS`;
@@ -121,9 +137,9 @@ env:
 
 See Kubernetes examples:
 
-- `k8s/dcp_workload1_step_up_stale_query.yaml`
-- `k8s/dcp_workload2_burst_stale_query.yaml`
-- `k8s/dcp_workload4_cycle_step_down_stale_query.yaml`
+- `k8s/dcp_workload1_step_up_stale_query.yaml` — ramp-up scale-up workload
+- `k8s/dcp_workload2_burst_stale_query.yaml` — burst scale-up workload
+- `k8s/dcp_workload4_cycle_step_down_stale_query.yaml` — ramp-cycle scale-up/scale-down workload
 
 ## Build released cloud.google.com/go/spanner image
 

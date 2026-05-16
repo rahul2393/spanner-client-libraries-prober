@@ -54,8 +54,16 @@ spec:
               value: "50"
             - name: SPANNER_DCP_MIN_RPC_PER_CHANNEL
               value: "5"
+            - name: OTEL_ENABLED
+              value: "true"
+            - name: OTEL_PROJECT_ID
+              value: "span-cloud-testing"
             - name: OTEL_SERVICE_NAME
               value: "irahul-go-dcp-workload2-burst"
+            - name: OTEL_METRIC_PREFIX
+              value: "custom.googleapis.com/irahul"
+            - name: OTEL_METRIC_EXPORT_INTERVAL_SECONDS
+              value: "10"
 #            - name: GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS
 #              value: "true"
 #            - name: GOOGLE_SPANNER_ENABLE_GCP_FALLBACK
