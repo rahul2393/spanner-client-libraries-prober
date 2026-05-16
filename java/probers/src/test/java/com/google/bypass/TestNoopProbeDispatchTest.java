@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 final class TestNoopProbeDispatchTest {
@@ -68,5 +71,57 @@ final class TestNoopProbeDispatchTest {
             + high
             + "; buckets="
             + Arrays.toString(counts));
+  }
+
+  @Test
+  void concurrencyModeStartsMaxInflightWorkers() throws Exception {
+    int maxInflight = 4;
+    CountDownLatch sawAllWorkersActive = new CountDownLatch(1);
+    AtomicInteger active = new AtomicInteger();
+    AtomicInteger maxSeen = new AtomicInteger();
+
+    ProbeRunner.Handle handle =
+        ProbeRunner.start(
+            new TestNoopProbe(),
+            new ProbeRunner.Options(
+                ProbeRunner.LoadMode.CONCURRENCY,
+                /* startQps= */ maxInflight,
+                /* endQps= */ 0.0,
+                /* stepQpsPercent= */ 0.0,
+                /* qpsStepIntervalSeconds= */ 1,
+                /* burstEnabled= */ false,
+                /* burstAfterSeconds= */ 1,
+                /* qpsCycleEnabled= */ false,
+                /* highQpsHoldSeconds= */ 0,
+                /* lowQpsHoldSeconds= */ 0,
+                maxInflight,
+                /* logIntervalSeconds= */ 10,
+                /* warmupCycles= */ 0,
+                Duration.ofMillis(250)),
+            p -> {
+              int now = active.incrementAndGet();
+              maxSeen.accumulateAndGet(now, Math::max);
+              if (now == maxInflight) {
+                sawAllWorkersActive.countDown();
+              }
+              try {
+                Thread.sleep(100);
+                p.probe();
+                return true;
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+              } finally {
+                active.decrementAndGet();
+              }
+            });
+
+    try {
+      assertTrue(
+          sawAllWorkersActive.await(2, TimeUnit.SECONDS),
+          "max active workers=" + maxSeen.get() + " want " + maxInflight);
+    } finally {
+      handle.stop();
+    }
   }
 }

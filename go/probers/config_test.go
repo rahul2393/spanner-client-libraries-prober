@@ -52,6 +52,41 @@ func TestLoadConfigCycleAliasAndBurstMode(t *testing.T) {
 	}
 }
 
+func TestLoadConfigConcurrencyMode(t *testing.T) {
+	t.Setenv("LOAD_MODE", "concurrency")
+	t.Setenv("START_QPS", "50")
+	t.Setenv("END_QPS", "600")
+	t.Setenv("MAX_INFLIGHT", "600")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig() failed: %v", err)
+	}
+	if cfg.loadMode != loadModeConcurrency {
+		t.Fatalf("loadMode = %q, want %q", cfg.loadMode, loadModeConcurrency)
+	}
+}
+
+func TestValidateConfigConcurrencyWorkersMustFitMaxInflight(t *testing.T) {
+	_, err := validateConfig(config{
+		loadMode:                       loadModeConcurrency,
+		startQPS:                       50,
+		endQPS:                         600,
+		qpsStepInterval:                1,
+		numRows:                        1,
+		payloadSize:                    1,
+		maxInflight:                    100,
+		maxStalenessSeconds:            1,
+		logIntervalSeconds:             1,
+		warmupCycles:                   0,
+		otelTraceSamplingFraction:      1,
+		otelMetricExportIntervalSecond: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "END_QPS worker count") {
+		t.Fatalf("validateConfig error = %v, want END_QPS worker count validation", err)
+	}
+}
+
 func TestValidateConfigCycleRequiresEndAboveStart(t *testing.T) {
 	_, err := validateConfig(config{
 		startQPS:                       100,

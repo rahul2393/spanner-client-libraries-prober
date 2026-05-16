@@ -124,3 +124,68 @@ func TestRunBurstCycleUsesCompressedTestQPSWindow(t *testing.T) {
 		t.Fatalf("low-after bucket count = %d, want reset near low and much lower than high=%d; all buckets=%v", lowAfter, high, counts)
 	}
 }
+
+func TestRunConcurrencyModeStartsTargetWorkers(t *testing.T) {
+	const maxWorkers = 4
+	p := &blockingProbe{
+		t:          t,
+		wantActive: maxWorkers,
+		allActive:  make(chan struct{}),
+	}
+	cfg := validTestNoopConfig(true)
+	cfg.loadMode = loadModeConcurrency
+	cfg.startQPS = maxWorkers
+	cfg.endQPS = maxWorkers
+	cfg.maxInflight = maxWorkers
+	cfg.logIntervalSeconds = 10
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runWithOptions(ctx, cfg, p, nil, runOptions{timeUnit: 250 * time.Millisecond})
+	}()
+
+	select {
+	case <-p.allActive:
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatalf("max active workers=%d, want %d", p.maxActive.Load(), maxWorkers)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runWithOptions did not stop")
+	}
+}
+
+type blockingProbe struct {
+	t          *testing.T
+	active     atomic.Int64
+	maxActive  atomic.Int64
+	wantActive int64
+	allActive  chan struct{}
+	closed     atomic.Bool
+}
+
+func (p *blockingProbe) Name() string { return "blocking" }
+
+func (p *blockingProbe) Probe(ctx context.Context) error {
+	active := p.active.Add(1)
+	updateMaxInt64(&p.maxActive, active)
+	if active == p.wantActive && p.closed.CompareAndSwap(false, true) {
+		close(p.allActive)
+	}
+	defer p.active.Add(-1)
+
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}

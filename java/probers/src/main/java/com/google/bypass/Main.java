@@ -60,6 +60,8 @@ final class Main {
   private static int highQpsHoldSeconds = envInt("HIGH_QPS_HOLD_SECONDS", 300);
   private static int lowQpsHoldSeconds = envInt("LOW_QPS_HOLD_SECONDS", 300);
   private static int maxInflight = envIntAny(new String[] {"MAX_INFLIGHT", "PARALLELISM"}, 64);
+  private static ProbeRunner.LoadMode loadMode =
+      ProbeRunner.LoadMode.parse(envStr("LOAD_MODE", "qps"));
   private static int logIntervalSeconds = envInt("LOG_INTERVAL_SECONDS", 10);
   private static boolean enableBypass = envBool("GOOGLE_SPANNER_EXPERIMENTAL_LOCATION_API", false);
   private static boolean enableGrpcGcp = envBool("ENABLE_GRPC_GCP", true);
@@ -70,6 +72,7 @@ final class Main {
   private static boolean disableDynamicChannelPool = envBool("DISABLE_DYNAMIC_CHANNEL_POOL", false);
   private static boolean useOtelForSpannerTracing =
       envBool("SPANNER_USE_OPENTELEMETRY_TRACING", true);
+  private static boolean enableSpannerOtelMetrics = envBool("SPANNER_ENABLE_OTEL_METRICS", true);
   private static boolean enableSpannerApiTracing = envBool("SPANNER_ENABLE_API_TRACING", true);
   private static boolean enableSpannerExtendedTracing =
       envBool("SPANNER_ENABLE_EXTENDED_TRACING", false);
@@ -147,38 +150,93 @@ final class Main {
 
   public static void main(String[] args) throws Exception {
     configureLogging();
-    if (startQps <= 0) {
-      throw new IllegalArgumentException("START_QPS/QPS must be > 0. Current value: " + startQps);
+    if (loadMode == ProbeRunner.LoadMode.QPS) {
+      if (startQps <= 0) {
+        throw new IllegalArgumentException("START_QPS/QPS must be > 0. Current value: " + startQps);
+      }
+      if (endQps < 0) {
+        throw new IllegalArgumentException("END_QPS must be >= 0. Current value: " + endQps);
+      }
+      if (stepQpsPercent < 0) {
+        throw new IllegalArgumentException(
+            "STEP_QPS_PERCENT/STEP_QPS must be >= 0. Current value: "
+                + stepQpsPercent);
+      }
+      if (qpsStepIntervalSeconds <= 0) {
+        throw new IllegalArgumentException(
+            "QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0. Current value: "
+                + qpsStepIntervalSeconds);
+      }
+      QpsController.validateKnobs(
+          startQps,
+          endQps,
+          stepQpsPercent,
+          burstEnabled,
+          burstAfterSeconds,
+          qpsCycleEnabled,
+          highQpsHoldSeconds,
+          lowQpsHoldSeconds);
+    } else {
+      if (startQps <= 0) {
+        throw new IllegalArgumentException(
+            "START_QPS/QPS must be > 0 because it is the starting worker count in LOAD_MODE=concurrency. Current value: "
+                + startQps);
+      }
+      if (endQps < 0) {
+        throw new IllegalArgumentException(
+            "END_QPS must be >= 0 because it is the ending worker count in LOAD_MODE=concurrency. Current value: "
+                + endQps);
+      }
+      if (stepQpsPercent < 0) {
+        throw new IllegalArgumentException(
+            "STEP_QPS_PERCENT/STEP_QPS must be >= 0. Current value: " + stepQpsPercent);
+      }
+      if (qpsStepIntervalSeconds <= 0) {
+        throw new IllegalArgumentException(
+            "QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0. Current value: "
+                + qpsStepIntervalSeconds);
+      }
     }
-    if (endQps < 0) {
-      throw new IllegalArgumentException("END_QPS must be >= 0. Current value: " + endQps);
-    }
-    if (stepQpsPercent < 0) {
-      throw new IllegalArgumentException(
-          "STEP_QPS_PERCENT/STEP_QPS must be >= 0. Current value: "
-              + stepQpsPercent);
-    }
-    if (qpsStepIntervalSeconds <= 0) {
-      throw new IllegalArgumentException(
-          "QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0. Current value: "
-              + qpsStepIntervalSeconds);
-    }
-    QpsController.validateKnobs(
-        startQps,
-        endQps,
-        stepQpsPercent,
-        burstEnabled,
-        burstAfterSeconds,
-        qpsCycleEnabled,
-        highQpsHoldSeconds,
-        lowQpsHoldSeconds);
     if (maxInflight <= 0) {
       throw new IllegalArgumentException("MAX_INFLIGHT must be > 0. Current value: " + maxInflight);
     }
+    if (loadMode == ProbeRunner.LoadMode.CONCURRENCY) {
+      if (startQps > maxInflight) {
+        throw new IllegalArgumentException(
+            "START_QPS/QPS worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency. start="
+                + startQps
+                + " max_inflight="
+                + maxInflight);
+      }
+      if (endQps > maxInflight) {
+        throw new IllegalArgumentException(
+            "END_QPS worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency. end="
+                + endQps
+                + " max_inflight="
+                + maxInflight);
+      }
+      if (qpsCycleEnabled || stepQpsPercent > 0 || burstEnabled) {
+        QpsController.validateKnobs(
+            startQps,
+            endQps,
+            stepQpsPercent,
+            burstEnabled,
+            burstAfterSeconds,
+            qpsCycleEnabled,
+            highQpsHoldSeconds,
+            lowQpsHoldSeconds);
+      }
+    }
     System.out.println("Hello Prober!");
     System.out.println("------------------------------------------------------------------------");
-    System.out.println("Start QPS: " + startQps);
-    System.out.println("End QPS: " + (endQps > 0 ? endQps : "<unlimited>"));
+    System.out.println(
+        loadMode == ProbeRunner.LoadMode.CONCURRENCY
+            ? "Start workers: " + startQps
+            : "Start QPS: " + startQps);
+    System.out.println(
+        loadMode == ProbeRunner.LoadMode.CONCURRENCY
+            ? "End workers: " + (endQps > 0 ? endQps : "<max-inflight cap>")
+            : "End QPS: " + (endQps > 0 ? endQps : "<unlimited>"));
     System.out.println("Step QPS percent: " + stepQpsPercent);
     System.out.println("QPS step interval seconds: " + qpsStepIntervalSeconds);
     System.out.println("Burst enabled: " + burstEnabled);
@@ -186,6 +244,7 @@ final class Main {
     System.out.println("QPS cycle enabled: " + qpsCycleEnabled);
     System.out.println("High QPS hold seconds: " + highQpsHoldSeconds);
     System.out.println("Low QPS hold seconds: " + lowQpsHoldSeconds);
+    System.out.println("Load mode: " + loadMode.name().toLowerCase());
     System.out.println("Max in-flight: " + maxInflight);
     System.out.println("Log interval seconds: " + logIntervalSeconds);
     System.out.println("Enable bypass: " + enableBypass);
@@ -193,6 +252,7 @@ final class Main {
     System.out.println("Enable dynamic channel pool: " + enableDynamicChannelPool);
     System.out.println("Disable dynamic channel pool: " + disableDynamicChannelPool);
     System.out.println("Use OTel for Spanner tracing: " + useOtelForSpannerTracing);
+    System.out.println("Enable Spanner OTel metrics: " + enableSpannerOtelMetrics);
     System.out.println("Enable Spanner API tracing: " + enableSpannerApiTracing);
     System.out.println("Enable Spanner extended tracing: " + enableSpannerExtendedTracing);
     System.out.println("Enable Spanner end-to-end tracing: " + enableSpannerEndToEndTracing);
@@ -219,6 +279,9 @@ final class Main {
     }
     if (useOtelForSpannerTracing) {
       SpannerOptions.enableOpenTelemetryTraces();
+    }
+    if (enableSpannerOtelMetrics) {
+      SpannerOptions.enableOpenTelemetryMetrics();
     }
 
     SpannerOptions.Builder optionsBuilder =
@@ -295,6 +358,7 @@ final class Main {
     ProbeRunner.start(
         probe,
         new ProbeRunner.Options(
+            loadMode,
             startQps,
             endQps,
             stepQpsPercent,

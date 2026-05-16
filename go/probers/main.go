@@ -61,9 +61,10 @@ func main() {
 }
 
 func printConfig(cfg config) {
-	log.Printf("probe=%s query_mode=%s start_qps=%.2f end_qps=%.2f step_qps_percent=%.2f qps_step_interval_s=%d burst_enabled=%t burst_after_s=%d qps_cycle_enabled=%t high_qps_hold_s=%d low_qps_hold_s=%d max_inflight=%d endpoint=%s insecure=%t db=%s num_rows=%d payload_size=%d max_staleness_s=%d direct_access=%t gcp_fallback=%t bypass=%t dcp_enabled=%t dcp_initial=%d dcp_min=%d dcp_max=%d dcp_max_rpc=%.2f dcp_min_rpc=%.2f pprof_enabled=%t pprof_addr=%s otel_enabled=%t otel_service=%s",
+	log.Printf("probe=%s query_mode=%s load_mode=%s start_qps=%.2f end_qps=%.2f step_qps_percent=%.2f qps_step_interval_s=%d burst_enabled=%t burst_after_s=%d qps_cycle_enabled=%t high_qps_hold_s=%d low_qps_hold_s=%d max_inflight=%d endpoint=%s insecure=%t db=%s num_rows=%d payload_size=%d max_staleness_s=%d direct_access=%t gcp_fallback=%t bypass=%t dcp_enabled=%t dcp_initial=%d dcp_min=%d dcp_max=%d dcp_max_rpc=%.2f dcp_min_rpc=%.2f pprof_enabled=%t pprof_addr=%s otel_enabled=%t otel_service=%s",
 		cfg.probeType,
 		cfg.queryMode,
+		cfg.loadMode,
 		cfg.startQPS,
 		cfg.endQPS,
 		cfg.stepQPSPercent,

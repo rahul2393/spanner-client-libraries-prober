@@ -37,6 +37,13 @@ const (
 	columnVal = "Value"
 )
 
+type loadMode string
+
+const (
+	loadModeQPS         loadMode = "qps"
+	loadModeConcurrency loadMode = "concurrency"
+)
+
 type config struct {
 	project             string
 	instance            string
@@ -46,6 +53,7 @@ type config struct {
 	insecure            bool
 	probeType           string
 	queryMode           string
+	loadMode            loadMode
 	startQPS            float64
 	endQPS              float64
 	stepQPSPercent      float64
@@ -94,6 +102,7 @@ func loadConfig() (config, error) {
 		insecure:            getEnvBool("INSECURE", false),
 		probeType:           strings.ToLower(getEnv("PROBE_TYPE", defaultProbeType)),
 		queryMode:           strings.ToLower(getEnv("QUERY_MODE", "normal")),
+		loadMode:            loadMode(strings.ToLower(strings.ReplaceAll(getEnv("LOAD_MODE", string(loadModeQPS)), "-", "_"))),
 		startQPS:            getEnvFloat64Any([]string{"START_QPS", "QPS"}, defaultQPS),
 		endQPS:              getEnvFloat64("END_QPS", 0),
 		stepQPSPercent:      getEnvFloat64Any([]string{"STEP_QPS_PERCENT", "STEP_QPS"}, 0),
@@ -138,7 +147,15 @@ func loadConfig() (config, error) {
 }
 
 func validateConfig(cfg config) (config, error) {
+	if cfg.loadMode == "" {
+		cfg.loadMode = loadModeQPS
+	}
+	if cfg.queryMode == "" {
+		cfg.queryMode = "normal"
+	}
 	switch {
+	case cfg.loadMode != loadModeQPS && cfg.loadMode != loadModeConcurrency:
+		return cfg, fmt.Errorf("LOAD_MODE must be one of [qps, concurrency], got %q", cfg.loadMode)
 	case cfg.startQPS <= 0:
 		return cfg, fmt.Errorf("START_QPS/QPS must be > 0, got %f", cfg.startQPS)
 	case cfg.endQPS < 0:
@@ -167,6 +184,10 @@ func validateConfig(cfg config) (config, error) {
 		return cfg, fmt.Errorf("PAYLOAD_SIZE must be > 0, got %d", cfg.payloadSize)
 	case cfg.maxInflight <= 0:
 		return cfg, fmt.Errorf("MAX_INFLIGHT/PARALLELISM must be > 0, got %d", cfg.maxInflight)
+	case cfg.loadMode == loadModeConcurrency && cfg.startQPS > float64(cfg.maxInflight):
+		return cfg, fmt.Errorf("START_QPS/QPS worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency, got start=%f max_inflight=%d", cfg.startQPS, cfg.maxInflight)
+	case cfg.loadMode == loadModeConcurrency && cfg.endQPS > float64(cfg.maxInflight):
+		return cfg, fmt.Errorf("END_QPS worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency, got end=%f max_inflight=%d", cfg.endQPS, cfg.maxInflight)
 	case cfg.maxStalenessSeconds <= 0:
 		return cfg, fmt.Errorf("MAX_STALENESS_SECONDS must be > 0, got %d", cfg.maxStalenessSeconds)
 	case cfg.warmupCycles < 0:

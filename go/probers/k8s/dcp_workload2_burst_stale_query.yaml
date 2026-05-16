@@ -24,32 +24,34 @@ spec:
               protocol: TCP
           resources:
             requests:
-              memory: "1Gi"
-              cpu: "2"
-            limits:
               memory: "2Gi"
               cpu: "4"
+            limits:
+              memory: "4Gi"
+              cpu: "8"
           env:
             - name: PROBE_TYPE
               value: "stale_query"
+            - name: LOAD_MODE
+              value: "concurrency"
             - name: START_QPS
-              value: "100"
+              value: "50"
             - name: END_QPS
-              value: "5000"
+              value: "600"
             - name: BURST_ENABLED
               value: "true"
             - name: BURST_AFTER_SECONDS
               value: "300"
             - name: MAX_INFLIGHT
-              value: "512"
+              value: "600"
             - name: SPANNER_DCP_ENABLED
               value: "true"
             - name: SPANNER_DCP_INITIAL_CHANNELS
-              value: "4"
+              value: "1"
             - name: SPANNER_DCP_MIN_CHANNELS
               value: "1"
             - name: SPANNER_DCP_MAX_CHANNELS
-              value: "200"
+              value: "50"
             - name: SPANNER_DCP_MAX_RPC_PER_CHANNEL
               value: "50"
             - name: SPANNER_DCP_MIN_RPC_PER_CHANNEL

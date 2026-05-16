@@ -20,7 +20,27 @@ final class ProbeRunner {
     boolean invoke(Probe probe);
   }
 
+  enum LoadMode {
+    QPS,
+    CONCURRENCY;
+
+    static LoadMode parse(String value) {
+      if (value == null || value.trim().isEmpty()) {
+        return QPS;
+      }
+      String normalized = value.trim().toUpperCase().replace('-', '_');
+      for (LoadMode mode : values()) {
+        if (mode.name().equals(normalized)) {
+          return mode;
+        }
+      }
+      throw new IllegalArgumentException(
+          "LOAD_MODE must be one of qps, concurrency. Current value: " + value);
+    }
+  }
+
   static final class Options {
+    final LoadMode loadMode;
     final double startQps;
     final double endQps;
     final double stepQpsPercent;
@@ -49,6 +69,39 @@ final class ProbeRunner {
         int logIntervalSeconds,
         int warmupCycles,
         Duration timeUnit) {
+      this(
+          LoadMode.QPS,
+          startQps,
+          endQps,
+          stepQpsPercent,
+          qpsStepIntervalSeconds,
+          burstEnabled,
+          burstAfterSeconds,
+          qpsCycleEnabled,
+          highQpsHoldSeconds,
+          lowQpsHoldSeconds,
+          maxInflight,
+          logIntervalSeconds,
+          warmupCycles,
+          timeUnit);
+    }
+
+    Options(
+        LoadMode loadMode,
+        double startQps,
+        double endQps,
+        double stepQpsPercent,
+        int qpsStepIntervalSeconds,
+        boolean burstEnabled,
+        int burstAfterSeconds,
+        boolean qpsCycleEnabled,
+        int highQpsHoldSeconds,
+        int lowQpsHoldSeconds,
+        int maxInflight,
+        int logIntervalSeconds,
+        int warmupCycles,
+        Duration timeUnit) {
+      this.loadMode = loadMode == null ? LoadMode.QPS : loadMode;
       this.startQps = startQps;
       this.endQps = endQps;
       this.stepQpsPercent = stepQpsPercent;
@@ -80,10 +133,16 @@ final class ProbeRunner {
     }
 
     void stop() throws InterruptedException {
-      dispatcher.interrupt();
-      dispatcher.join(1000);
+      if (dispatcher != null) {
+        dispatcher.interrupt();
+        dispatcher.join(1000);
+      }
       controlScheduler.shutdownNow();
-      executor.shutdown();
+      if (dispatcher == null) {
+        executor.shutdownNow();
+      } else {
+        executor.shutdown();
+      }
       executor.awaitTermination(1, TimeUnit.SECONDS);
     }
   }
@@ -91,42 +150,74 @@ final class ProbeRunner {
   static Handle start(Probe probe, Options options, ProbeInvoker invoker) {
     warmup(probe, options.warmupCycles);
 
-    // Do not use newFixedThreadPool(maxInflight): maxInflight becomes the core size, so
-    // early probe dispatches create one worker per request until that limit, even when
-    // existing workers are idle. Reusing idle workers keeps burst timing from being skewed
-    // by thread-start lag; the semaphore still caps in-flight probes.
     ExecutorService executor =
-        new ThreadPoolExecutor(
-            0, options.maxInflight, 60L, TimeUnit.SECONDS, new SynchronousQueue<>());
+        options.loadMode == LoadMode.CONCURRENCY
+            ? Executors.newFixedThreadPool(options.maxInflight)
+            : createQpsExecutor(options);
     ScheduledExecutorService controlScheduler = Executors.newScheduledThreadPool(2);
-    Semaphore permits = new Semaphore(options.maxInflight);
     AtomicReference<Double> targetQps = new AtomicReference<>(options.startQps);
-    AtomicLong successTotal = new AtomicLong();
-    AtomicLong errorTotal = new AtomicLong();
-    AtomicLong droppedTotal = new AtomicLong();
-    AtomicLong successInterval = new AtomicLong();
-    AtomicLong errorInterval = new AtomicLong();
-    AtomicLong droppedInterval = new AtomicLong();
-    AtomicLong totalLatencyMicros = new AtomicLong();
+    RunStats stats = new RunStats();
 
-    scheduleQpsControl(controlScheduler, targetQps, options);
     controlScheduler.scheduleAtFixedRate(
-        () ->
-            logStats(
-                targetQps,
-                permits,
-                options,
-                successTotal,
-                errorTotal,
-                droppedTotal,
-                successInterval,
-                errorInterval,
-                droppedInterval,
-                totalLatencyMicros),
+        () -> logStats(targetQps, options, stats),
         delayNanos(options.logIntervalSeconds, options),
         delayNanos(options.logIntervalSeconds, options),
         TimeUnit.NANOSECONDS);
 
+    scheduleQpsControl(controlScheduler, targetQps, options);
+
+    if (options.loadMode == LoadMode.CONCURRENCY) {
+      startConcurrencyWorkers(executor, probe, options, invoker, stats, targetQps);
+      return new Handle(executor, controlScheduler, null);
+    }
+
+    Thread dispatcher = startQpsDispatcher(executor, probe, options, invoker, stats, targetQps);
+    return new Handle(executor, controlScheduler, dispatcher);
+  }
+
+  private static ExecutorService createQpsExecutor(Options options) {
+    // Do not use newFixedThreadPool(maxInflight): maxInflight becomes the core size, so
+    // early probe dispatches create one worker per request until that limit, even when
+    // existing workers are idle. Reusing idle workers keeps burst timing from being skewed
+    // by thread-start lag; the semaphore still caps in-flight probes.
+    return new ThreadPoolExecutor(
+        0, options.maxInflight, 60L, TimeUnit.SECONDS, new SynchronousQueue<>());
+  }
+
+  private static void startConcurrencyWorkers(
+      ExecutorService executor,
+      Probe probe,
+      Options options,
+      ProbeInvoker invoker,
+      RunStats stats,
+      AtomicReference<Double> targetWorkers) {
+    for (int i = 0; i < options.maxInflight; i++) {
+      int workerNumber = i + 1;
+      executor.execute(
+          () -> {
+            while (!Thread.currentThread().isInterrupted()) {
+              if (workerNumber <= targetWorkerCount(targetWorkers.get(), options)) {
+                runProbe(probe, invoker, stats);
+              } else {
+                sleepQuietly(100, TimeUnit.MILLISECONDS);
+              }
+            }
+          });
+    }
+  }
+
+  private static long targetWorkerCount(double target, Options options) {
+    return Math.max(0L, Math.min(options.maxInflight, Math.round(target)));
+  }
+
+  private static Thread startQpsDispatcher(
+      ExecutorService executor,
+      Probe probe,
+      Options options,
+      ProbeInvoker invoker,
+      RunStats stats,
+      AtomicReference<Double> targetQps) {
+    Semaphore permits = new Semaphore(options.maxInflight);
     Thread dispatcher =
         new Thread(
             () -> {
@@ -136,24 +227,14 @@ final class ProbeRunner {
                   return;
                 }
                 if (!permits.tryAcquire()) {
-                  droppedTotal.incrementAndGet();
-                  droppedInterval.incrementAndGet();
+                  stats.recordDropped();
                   continue;
                 }
                 executor.execute(
                     () -> {
-                      long start = System.nanoTime();
                       try {
-                        boolean success = invoker.invoke(probe);
-                        if (success) {
-                          successTotal.incrementAndGet();
-                          successInterval.incrementAndGet();
-                        } else {
-                          errorTotal.incrementAndGet();
-                          errorInterval.incrementAndGet();
-                        }
+                        runProbe(probe, invoker, stats);
                       } finally {
-                        totalLatencyMicros.addAndGet((System.nanoTime() - start) / 1000L);
                         permits.release();
                       }
                     });
@@ -161,7 +242,21 @@ final class ProbeRunner {
             },
             "probe-dispatcher");
     dispatcher.start();
-    return new Handle(executor, controlScheduler, dispatcher);
+    return dispatcher;
+  }
+
+  private static void runProbe(Probe probe, ProbeInvoker invoker, RunStats stats) {
+    long start = System.nanoTime();
+    stats.recordStarted();
+    try {
+      if (invoker.invoke(probe)) {
+        stats.recordSuccess();
+      } else {
+        stats.recordError();
+      }
+    } finally {
+      stats.recordFinished((System.nanoTime() - start) / 1000L);
+    }
   }
 
   private static void warmup(Probe probe, int warmupCycles) {
@@ -202,7 +297,10 @@ final class ProbeRunner {
           () -> {
             if (options.endQps > 0) {
               double old = targetQps.getAndSet(options.endQps);
-              logger.info(String.format("burst qps from %.2f to %.2f", old, options.endQps));
+              logger.info(
+                  String.format(
+                      "burst %s from %.2f to %.2f",
+                      loadUnit(options), old, options.endQps));
             }
             startStepping.run();
           },
@@ -222,15 +320,15 @@ final class ProbeRunner {
           double old = targetQps.getAndSet(options.endQps);
           logger.info(
               String.format(
-                  "burst qps from %.2f to %.2f hold_seconds=%d",
-                  old, options.endQps, options.highQpsHoldSeconds));
+                  "burst %s from %.2f to %.2f hold_seconds=%d",
+                  loadUnit(options), old, options.endQps, options.highQpsHoldSeconds));
           controlScheduler.schedule(
               () -> {
                 double previous = targetQps.getAndSet(options.startQps);
                 logger.info(
                     String.format(
-                        "reset qps from %.2f to %.2f hold_seconds=%d",
-                        previous, options.startQps, options.burstAfterSeconds));
+                        "reset %s from %.2f to %.2f hold_seconds=%d",
+                        loadUnit(options), previous, options.startQps, options.burstAfterSeconds));
                 scheduleBurstQpsCycle(controlScheduler, targetQps, options);
               },
               delayNanos(options.highQpsHoldSeconds, options),
@@ -253,7 +351,8 @@ final class ProbeRunner {
             double next =
                 QpsController.stepUpQps(current, options.endQps, options.stepQpsPercent);
             targetQps.set(next);
-            logger.info(String.format("step up qps from %.2f to %.2f", current, next));
+            logger.info(
+                String.format("step up %s from %.2f to %.2f", loadUnit(options), current, next));
             scheduleRampQpsCycle(
                 controlScheduler,
                 targetQps,
@@ -269,8 +368,8 @@ final class ProbeRunner {
           if (next == options.startQps) {
             logger.info(
                 String.format(
-                    "step down qps from %.2f to %.2f hold_seconds=%d",
-                    current, next, options.lowQpsHoldSeconds));
+                    "step down %s from %.2f to %.2f hold_seconds=%d",
+                    loadUnit(options), current, next, options.lowQpsHoldSeconds));
             scheduleRampQpsCycle(
                 controlScheduler,
                 targetQps,
@@ -279,7 +378,8 @@ final class ProbeRunner {
                 options.lowQpsHoldSeconds);
             return;
           }
-          logger.info(String.format("step down qps from %.2f to %.2f", current, next));
+          logger.info(
+              String.format("step down %s from %.2f to %.2f", loadUnit(options), current, next));
           scheduleRampQpsCycle(
               controlScheduler,
               targetQps,
@@ -298,7 +398,7 @@ final class ProbeRunner {
     }
     double next = QpsController.stepUpQps(current, options.endQps, options.stepQpsPercent);
     targetQps.set(next);
-    logger.info(String.format("step qps from %.2f to %.2f", current, next));
+    logger.info(String.format("step %s from %.2f to %.2f", loadUnit(options), current, next));
   }
 
   private static void sleepForQps(double qps, Duration unit) {
@@ -312,40 +412,115 @@ final class ProbeRunner {
 
   private static void logStats(
       AtomicReference<Double> targetQps,
-      Semaphore permits,
       Options options,
-      AtomicLong successTotal,
-      AtomicLong errorTotal,
-      AtomicLong droppedTotal,
-      AtomicLong successInterval,
-      AtomicLong errorInterval,
-      AtomicLong droppedInterval,
-      AtomicLong totalLatencyMicros) {
-    long ok = successInterval.getAndSet(0);
-    long errors = errorInterval.getAndSet(0);
-    long dropped = droppedInterval.getAndSet(0);
+      RunStats stats) {
+    long ok = stats.successInterval.getAndSet(0);
+    long errors = stats.errorInterval.getAndSet(0);
+    long dropped = stats.droppedInterval.getAndSet(0);
     long completed = ok + errors;
-    long avgLatencyMicros = completed == 0 ? 0 : totalLatencyMicros.getAndSet(0) / completed;
+    long avgLatencyMicros =
+        completed == 0 ? 0 : stats.totalLatencyMicros.getAndSet(0) / completed;
     double intervalSeconds = delayNanos(options.logIntervalSeconds, options) / 1_000_000_000.0;
     double actualQps = intervalSeconds <= 0 ? 0 : (ok + errors) / intervalSeconds;
+    long currentInflight = stats.currentInflight.get();
+    long maxInflightSeen = stats.maxInflightInterval.getAndSet(currentInflight);
+    long inflightSamples = stats.inflightSampleCount.getAndSet(1);
+    long inflightSampleSum = stats.inflightSampleSum.getAndSet(currentInflight);
+    double avgInflight =
+        inflightSamples == 0 ? currentInflight : (double) inflightSampleSum / inflightSamples;
     logger.info(
-        String.format(
-            "stats target_qps=%.2f actual_qps=%.2f ok=%d err=%d dropped=%d total_ok=%d total_err=%d total_dropped=%d inflight=%d max_inflight=%d avg_latency_us=%d",
-            targetQps.get(),
-            actualQps,
-            ok,
-            errors,
-            dropped,
-            successTotal.get(),
-            errorTotal.get(),
-            droppedTotal.get(),
-            options.maxInflight - permits.availablePermits(),
-            options.maxInflight,
-            avgLatencyMicros));
+        options.loadMode == LoadMode.CONCURRENCY
+            ? String.format(
+                "stats load_mode=concurrency target_workers=%d actual_qps=%.2f ok=%d err=%d dropped=%d total_ok=%d total_err=%d total_dropped=%d inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d avg_latency_us=%d",
+                targetWorkerCount(targetQps.get(), options),
+                actualQps,
+                ok,
+                errors,
+                dropped,
+                stats.successTotal.get(),
+                stats.errorTotal.get(),
+                stats.droppedTotal.get(),
+                currentInflight,
+                avgInflight,
+                maxInflightSeen,
+                options.maxInflight,
+                avgLatencyMicros)
+            : String.format(
+                "stats load_mode=qps target_qps=%.2f actual_qps=%.2f ok=%d err=%d dropped=%d total_ok=%d total_err=%d total_dropped=%d inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d avg_latency_us=%d",
+                targetQps.get(),
+                actualQps,
+                ok,
+                errors,
+                dropped,
+                stats.successTotal.get(),
+                stats.errorTotal.get(),
+                stats.droppedTotal.get(),
+                currentInflight,
+                avgInflight,
+                maxInflightSeen,
+                options.maxInflight,
+                avgLatencyMicros));
   }
 
   private static long delayNanos(int units, Options options) {
     return Math.max(1L, units * options.timeUnit.toNanos());
+  }
+
+  private static String loadUnit(Options options) {
+    return options.loadMode == LoadMode.CONCURRENCY ? "workers" : "qps";
+  }
+
+  private static void sleepQuietly(long duration, TimeUnit unit) {
+    try {
+      unit.sleep(duration);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
+  private static final class RunStats {
+    private final AtomicLong successTotal = new AtomicLong();
+    private final AtomicLong errorTotal = new AtomicLong();
+    private final AtomicLong droppedTotal = new AtomicLong();
+    private final AtomicLong successInterval = new AtomicLong();
+    private final AtomicLong errorInterval = new AtomicLong();
+    private final AtomicLong droppedInterval = new AtomicLong();
+    private final AtomicLong totalLatencyMicros = new AtomicLong();
+    private final AtomicLong currentInflight = new AtomicLong();
+    private final AtomicLong maxInflightInterval = new AtomicLong();
+    private final AtomicLong inflightSampleSum = new AtomicLong();
+    private final AtomicLong inflightSampleCount = new AtomicLong();
+
+    private void recordStarted() {
+      long inflight = currentInflight.incrementAndGet();
+      maxInflightInterval.accumulateAndGet(inflight, Math::max);
+      recordInflightSample(inflight);
+    }
+
+    private void recordFinished(long latencyMicros) {
+      totalLatencyMicros.addAndGet(latencyMicros);
+      recordInflightSample(currentInflight.decrementAndGet());
+    }
+
+    private void recordSuccess() {
+      successTotal.incrementAndGet();
+      successInterval.incrementAndGet();
+    }
+
+    private void recordError() {
+      errorTotal.incrementAndGet();
+      errorInterval.incrementAndGet();
+    }
+
+    private void recordDropped() {
+      droppedTotal.incrementAndGet();
+      droppedInterval.incrementAndGet();
+    }
+
+    private void recordInflightSample(long inflight) {
+      inflightSampleSum.addAndGet(inflight);
+      inflightSampleCount.incrementAndGet();
+    }
   }
 
   private ProbeRunner() {}

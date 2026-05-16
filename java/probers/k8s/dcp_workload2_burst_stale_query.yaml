@@ -33,25 +33,29 @@ spec:
             - /app/main.jar
           resources:
             requests:
-              memory: "1Gi"
-              cpu: "2"
-            limits:
               memory: "2Gi"
               cpu: "4"
+            limits:
+              memory: "4Gi"
+              cpu: "8"
           env:
             - name: PROBE_TYPE
               value: "stale_query"
+            - name: LOAD_MODE
+              value: "concurrency"
             - name: START_QPS
-              value: "100"
+              value: "50"
             - name: END_QPS
-              value: "5000"
+              value: "600"
             - name: BURST_ENABLED
               value: "true"
             - name: BURST_AFTER_SECONDS
               value: "300"
             - name: MAX_INFLIGHT
-              value: "512"
+              value: "600"
             - name: ENABLE_DYNAMIC_CHANNEL_POOL
+              value: "true"
+            - name: SPANNER_ENABLE_OTEL_METRICS
               value: "true"
             - name: OTEL_SERVICE_NAME
               value: "irahul-java-dcp-workload2-burst"

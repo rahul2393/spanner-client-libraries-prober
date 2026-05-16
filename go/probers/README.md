@@ -52,6 +52,7 @@ The Go runner already uses goroutine-per-probe execution. The dispatcher submits
 | `QPS_CYCLE_ENABLED` or `CYCLE_ENABLED` | `false` | Continuously cycle QPS for scale-up/scale-down testing |
 | `HIGH_QPS_HOLD_SECONDS` | `300` | In burst cycle mode, hold `END_QPS` for this many seconds |
 | `LOW_QPS_HOLD_SECONDS` | `300` | In ramp cycle mode, hold `START_QPS` after step-down for this many seconds |
+| `LOAD_MODE` | `qps` | `qps` paces submissions by target QPS. `concurrency` treats `START_QPS`/`END_QPS` as worker counts and treats actual QPS as an output metric |
 | `MAX_INFLIGHT` or `PARALLELISM` | `8` | Max active probe operations |
 | `LOG_INTERVAL_SECONDS` | `10` | Stats log interval |
 
@@ -89,6 +90,16 @@ QPS controller modes:
 - ramp cycle: with `QPS_CYCLE_ENABLED=true` and `BURST_ENABLED=false`, QPS ramps up to `END_QPS`, steps down to `START_QPS`, holds `LOW_QPS_HOLD_SECONDS`, then repeats;
 - burst cycle: with both `QPS_CYCLE_ENABLED=true` and `BURST_ENABLED=true`, QPS waits `BURST_AFTER_SECONDS`, jumps to `END_QPS`, holds `HIGH_QPS_HOLD_SECONDS`, resets to `START_QPS`, then repeats.
 
+Concurrency mode:
+
+- set `LOAD_MODE=concurrency` to scale active workers instead of QPS;
+- `START_QPS` is the starting active worker count;
+- `END_QPS` is the target active worker count;
+- `STEP_QPS_PERCENT`, `QPS_STEP_INTERVAL_SECONDS`, `QPS_CYCLE_ENABLED`, and `LOW_QPS_HOLD_SECONDS` work the same way, but they step worker count instead of QPS;
+- `MAX_INFLIGHT` is the hard upper bound for worker count;
+- each active worker runs a blocking `Probe()` call, then immediately starts another one;
+- use this for DCP stress when you need sustained active streams instead of QPS-paced submissions.
+
 For DCP scale-down validation, keep `LOW_QPS_HOLD_SECONDS` long enough for the client scale-down check interval, consecutive low-load checks, and drain idle grace.
 
 DCP stress example:
@@ -97,16 +108,18 @@ DCP stress example:
 env:
   - name: PROBE_TYPE
     value: "stale_query"
+  - name: LOAD_MODE
+    value: "concurrency"
   - name: START_QPS
-    value: "100"
+    value: "50"
   - name: END_QPS
-    value: "5000"
+    value: "600"
   - name: STEP_QPS_PERCENT
     value: "25"
   - name: QPS_STEP_INTERVAL_SECONDS
     value: "60"
   - name: MAX_INFLIGHT
-    value: "512"
+    value: "600"
   - name: SPANNER_DCP_ENABLED
     value: "true"
 ```
@@ -117,10 +130,12 @@ Continuous DCP scale-up/scale-down example:
 env:
   - name: PROBE_TYPE
     value: "stale_query"
+  - name: LOAD_MODE
+    value: "concurrency"
   - name: START_QPS
-    value: "200"
+    value: "50"
   - name: END_QPS
-    value: "5000"
+    value: "600"
   - name: STEP_QPS_PERCENT
     value: "50"
   - name: QPS_STEP_INTERVAL_SECONDS
