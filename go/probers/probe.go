@@ -18,6 +18,8 @@ type probe interface {
 
 func newProbe(client *spanner.Client, cfg config) (probe, error) {
 	switch cfg.probeType {
+	case "test_noop":
+		return &noopProbe{}, nil
 	case "strong_read":
 		return &strongReadProbe{client: client, numRows: cfg.numRows}, nil
 	case "stale_read":

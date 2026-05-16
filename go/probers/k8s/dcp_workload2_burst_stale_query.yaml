@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: spanner-ns
+  name: irahul-go-dcp-workload2-burst
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: irahul-go-dcp-workload2-burst
+  template:
+    metadata:
+      labels:
+        app: irahul-go-dcp-workload2-burst
+    spec:
+      containers:
+        - name: workload2-burst
+          # Build with: ./go/probers/scripts/build-images.sh source <dcp-branch> --push
+          image: us-central1-docker.pkg.dev/span-cloud-testing/irahul-images/irahul-go-client:dcp
+          imagePullPolicy: Always
+          ports:
+            - name: pprof
+              containerPort: 6060
+              protocol: TCP
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "2"
+            limits:
+              memory: "2Gi"
+              cpu: "4"
+          env:
+            - name: PROBE_TYPE
+              value: "stale_query"
+            - name: START_QPS
+              value: "100"
+            - name: END_QPS
+              value: "5000"
+            - name: BURST_ENABLED
+              value: "true"
+            - name: BURST_AFTER_SECONDS
+              value: "300"
+            - name: MAX_INFLIGHT
+              value: "512"
+            - name: SPANNER_DCP_ENABLED
+              value: "true"
+            - name: SPANNER_DCP_INITIAL_CHANNELS
+              value: "4"
+            - name: SPANNER_DCP_MIN_CHANNELS
+              value: "1"
+            - name: SPANNER_DCP_MAX_CHANNELS
+              value: "200"
+            - name: SPANNER_DCP_MAX_RPC_PER_CHANNEL
+              value: "50"
+            - name: SPANNER_DCP_MIN_RPC_PER_CHANNEL
+              value: "5"
+            - name: OTEL_SERVICE_NAME
+              value: "irahul-go-dcp-workload2-burst"
+#            - name: GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS
+#              value: "true"
+#            - name: GOOGLE_SPANNER_ENABLE_GCP_FALLBACK
+#              value: "true"
+#            - name: PPROF_ENABLED
+#              value: "true"
+#            - name: PPROF_ADDR
+#              value: ":6060"

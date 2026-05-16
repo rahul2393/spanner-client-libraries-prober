@@ -22,19 +22,39 @@ type metrics struct {
 	totalLatencyUs    atomic.Int64
 }
 
+type runOptions struct {
+	timeUnit time.Duration
+}
+
+func defaultRunOptions() runOptions {
+	return runOptions{timeUnit: time.Second}
+}
+
+func (o runOptions) unit() time.Duration {
+	if o.timeUnit <= 0 {
+		return time.Second
+	}
+	return o.timeUnit
+}
+
 func run(ctx context.Context, cfg config, p probe, otelState *otelRuntime) {
-	statsTicker := time.NewTicker(time.Duration(cfg.logIntervalSeconds) * time.Second)
+	runWithOptions(ctx, cfg, p, otelState, defaultRunOptions())
+}
+
+func runWithOptions(ctx context.Context, cfg config, p probe, otelState *otelRuntime, opts runOptions) {
+	unit := opts.unit()
+	statsTicker := time.NewTicker(time.Duration(cfg.logIntervalSeconds) * unit)
 	defer statsTicker.Stop()
 
 	targetQPS := newTargetQPS(cfg.startQPS)
-	startQPSController(ctx, cfg, targetQPS)
+	startQPSController(ctx, cfg, targetQPS, unit)
 
 	sem := make(chan struct{}, cfg.maxInflight)
 	m := &metrics{}
 	start := time.Now()
 
 	for {
-		delay := dispatchDelay(targetQPS.Load())
+		delay := dispatchDelayForUnit(targetQPS.Load(), unit)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -119,20 +139,28 @@ func (s *targetQPSState) Store(qps float64) {
 }
 
 func dispatchDelay(qps float64) time.Duration {
+	return dispatchDelayForUnit(qps, time.Second)
+}
+
+func dispatchDelayForUnit(qps float64, unit time.Duration) time.Duration {
 	if qps <= 0 {
-		return time.Second
+		return unit
 	}
-	delay := time.Duration(float64(time.Second) / qps)
+	delay := time.Duration(float64(unit) / qps)
 	if delay <= 0 {
 		return time.Nanosecond
 	}
 	return delay
 }
 
-func startQPSController(ctx context.Context, cfg config, targetQPS *targetQPSState) {
+func startQPSController(ctx context.Context, cfg config, targetQPS *targetQPSState, unit time.Duration) {
 	if cfg.burstEnabled {
+		if cfg.qpsCycleEnabled {
+			startBurstQPSCycle(ctx, cfg, targetQPS, unit)
+			return
+		}
 		go func() {
-			timer := time.NewTimer(time.Duration(cfg.burstAfterSeconds) * time.Second)
+			timer := time.NewTimer(time.Duration(cfg.burstAfterSeconds) * unit)
 			defer timer.Stop()
 			select {
 			case <-ctx.Done():
@@ -142,20 +170,77 @@ func startQPSController(ctx context.Context, cfg config, targetQPS *targetQPSSta
 					targetQPS.Store(cfg.endQPS)
 					log.Printf("burst_qps target_qps=%.2f", cfg.endQPS)
 				}
-				startQPSRamp(ctx, cfg, targetQPS)
+				startQPSRamp(ctx, cfg, targetQPS, unit)
 			}
 		}()
 		return
 	}
-	startQPSRamp(ctx, cfg, targetQPS)
+	if cfg.qpsCycleEnabled {
+		startRampQPSCycle(ctx, cfg, targetQPS, unit)
+		return
+	}
+	startQPSRamp(ctx, cfg, targetQPS, unit)
 }
 
-func startQPSRamp(ctx context.Context, cfg config, targetQPS *targetQPSState) {
+func startBurstQPSCycle(ctx context.Context, cfg config, targetQPS *targetQPSState, unit time.Duration) {
+	go func() {
+		for {
+			if !sleepOrDone(ctx, time.Duration(cfg.burstAfterSeconds)*unit) {
+				return
+			}
+			targetQPS.Store(cfg.endQPS)
+			log.Printf("burst_qps target_qps=%.2f hold_seconds=%d", cfg.endQPS, cfg.highQPSHoldSeconds)
+			if !sleepOrDone(ctx, time.Duration(cfg.highQPSHoldSeconds)*unit) {
+				return
+			}
+			targetQPS.Store(cfg.startQPS)
+			log.Printf("reset_qps target_qps=%.2f hold_seconds=%d", cfg.startQPS, cfg.burstAfterSeconds)
+		}
+	}()
+}
+
+func startRampQPSCycle(ctx context.Context, cfg config, targetQPS *targetQPSState, unit time.Duration) {
+	go func() {
+		direction := 1
+		ticker := time.NewTicker(time.Duration(cfg.qpsStepInterval) * unit)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				current := targetQPS.Load()
+				if direction > 0 {
+					next := stepUpQPS(current, cfg.endQPS, cfg.stepQPSPercent)
+					if next == cfg.endQPS {
+						direction = -1
+					}
+					targetQPS.Store(next)
+					log.Printf("step_up_qps old_qps=%.2f new_qps=%.2f", current, next)
+					continue
+				}
+
+				next := stepDownQPS(current, cfg.startQPS, cfg.stepQPSPercent)
+				targetQPS.Store(next)
+				log.Printf("step_down_qps old_qps=%.2f new_qps=%.2f", current, next)
+				if next == cfg.startQPS {
+					log.Printf("low_qps_hold target_qps=%.2f hold_seconds=%d", cfg.startQPS, cfg.lowQPSHoldSeconds)
+					if !sleepOrDone(ctx, time.Duration(cfg.lowQPSHoldSeconds)*unit) {
+						return
+					}
+					direction = 1
+				}
+			}
+		}
+	}()
+}
+
+func startQPSRamp(ctx context.Context, cfg config, targetQPS *targetQPSState, unit time.Duration) {
 	if cfg.stepQPSPercent <= 0 {
 		return
 	}
 	go func() {
-		ticker := time.NewTicker(time.Duration(cfg.qpsStepInterval) * time.Second)
+		ticker := time.NewTicker(time.Duration(cfg.qpsStepInterval) * unit)
 		defer ticker.Stop()
 		for {
 			select {
@@ -166,15 +251,42 @@ func startQPSRamp(ctx context.Context, cfg config, targetQPS *targetQPSState) {
 				if cfg.endQPS > 0 && current >= cfg.endQPS {
 					continue
 				}
-				next := current * (1.0 + cfg.stepQPSPercent/100.0)
-				if cfg.endQPS > 0 && next > cfg.endQPS {
-					next = cfg.endQPS
-				}
+				next := stepUpQPS(current, cfg.endQPS, cfg.stepQPSPercent)
 				targetQPS.Store(next)
 				log.Printf("step_qps old_qps=%.2f new_qps=%.2f", current, next)
 			}
 		}
 	}()
+}
+
+func stepUpQPS(current, end, percent float64) float64 {
+	next := current * (1.0 + percent/100.0)
+	if end > 0 && next > end {
+		return end
+	}
+	return next
+}
+
+func stepDownQPS(current, start, percent float64) float64 {
+	if percent >= 100 {
+		return start
+	}
+	next := current * (1.0 - percent/100.0)
+	if next < start {
+		return start
+	}
+	return next
+}
+
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func warmup(ctx context.Context, p probe, cycles int) error {
