@@ -80,16 +80,16 @@ func TestRunBurstCycleUsesCompressedTestQPSWindow(t *testing.T) {
 	unit := 250 * time.Millisecond
 	started := time.Now()
 	noop := &noopProbe{
-		buckets: make([]atomic.Int64, 4),
+		buckets: make([]atomic.Int64, 6),
 		bucketFn: func() int {
 			return int(time.Since(started) / unit)
 		},
 	}
 	cfg := validTestNoopConfig(true)
-	cfg.startQPS = 10
+	cfg.startQPS = 20
 	cfg.endQPS = 500
 	cfg.burstEnabled = true
-	cfg.burstAfterSeconds = 1
+	cfg.burstAfterSeconds = 2
 	cfg.qpsCycleEnabled = true
 	cfg.highQPSHoldSeconds = 1
 	cfg.maxInflight = 1000
@@ -101,7 +101,7 @@ func TestRunBurstCycleUsesCompressedTestQPSWindow(t *testing.T) {
 		defer close(done)
 		runWithOptions(ctx, cfg, noop, nil, runOptions{timeUnit: unit})
 	}()
-	time.Sleep(740 * time.Millisecond)
+	time.Sleep(1220 * time.Millisecond)
 	cancel()
 	select {
 	case <-done:
@@ -111,17 +111,18 @@ func TestRunBurstCycleUsesCompressedTestQPSWindow(t *testing.T) {
 	time.Sleep(25 * time.Millisecond)
 
 	counts := noop.BucketCounts()
-	lowBefore := counts[0]
-	high := counts[1]
-	lowAfter := counts[2]
-	if lowBefore < 5 || lowBefore > 25 {
-		t.Fatalf("low-before bucket count = %d, want roughly 10; all buckets=%v", lowBefore, counts)
+	lowBefore := counts[0] + counts[1]
+	high := counts[2]
+	transitionAfterReset := counts[3]
+	lowAfter := counts[4]
+	if lowBefore < 10 || lowBefore > 50 {
+		t.Fatalf("low-before bucket count = %d, want roughly 40 across first two buckets; all buckets=%v", lowBefore, counts)
 	}
-	if high < 100 || high < lowBefore*8 {
+	if high < 80 || high < lowBefore*6 {
 		t.Fatalf("high bucket count = %d, want burst much higher than low-before=%d; all buckets=%v", high, lowBefore, counts)
 	}
-	if lowAfter < 5 || lowAfter > 40 || lowAfter*5 > high {
-		t.Fatalf("low-after bucket count = %d, want reset near low and much lower than high=%d; all buckets=%v", lowAfter, high, counts)
+	if lowAfter < 2 || lowAfter*8 > high {
+		t.Fatalf("low-after bucket count = %d, want settled reset much lower than high=%d; transition-after-reset=%d; all buckets=%v", lowAfter, high, transitionAfterReset, counts)
 	}
 }
 

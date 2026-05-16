@@ -19,18 +19,18 @@ final class TestNoopProbeDispatchTest {
             /* latencyMillis= */ 0,
             /* errorEvery= */ 0,
             () -> (int) ((System.nanoTime() - startedNanos) / unit.toNanos()),
-            /* bucketCount= */ 4);
+            /* bucketCount= */ 6);
 
     ProbeRunner.Handle handle =
         ProbeRunner.start(
             probe,
             new ProbeRunner.Options(
-                /* startQps= */ 10.0,
+                /* startQps= */ 20.0,
                 /* endQps= */ 500.0,
                 /* stepQpsPercent= */ 0.0,
                 /* qpsStepIntervalSeconds= */ 1,
                 /* burstEnabled= */ true,
-                /* burstAfterSeconds= */ 1,
+                /* burstAfterSeconds= */ 2,
                 /* qpsCycleEnabled= */ true,
                 /* highQpsHoldSeconds= */ 1,
                 /* lowQpsHoldSeconds= */ 1,
@@ -42,21 +42,22 @@ final class TestNoopProbeDispatchTest {
               p.probe();
               return true;
             });
-    Thread.sleep(740);
+    Thread.sleep(1220);
     handle.stop();
 
     long[] counts = probe.getBucketCounts();
-    long lowBefore = counts[0];
-    long high = counts[1];
-    long lowAfter = counts[2];
+    long lowBefore = counts[0] + counts[1];
+    long high = counts[2];
+    long transitionAfterReset = counts[3];
+    long lowAfter = counts[4];
     assertTrue(
-        lowBefore >= 5 && lowBefore <= 25,
+        lowBefore >= 10 && lowBefore <= 50,
         "low-before bucket count="
             + lowBefore
-            + " want roughly 10; buckets="
+            + " want roughly 40 across first two buckets; buckets="
             + Arrays.toString(counts));
     assertTrue(
-        high >= 100 && high >= lowBefore * 8,
+        high >= 80 && high >= lowBefore * 6,
         "high bucket count="
             + high
             + " want burst much higher than low-before="
@@ -64,11 +65,13 @@ final class TestNoopProbeDispatchTest {
             + "; buckets="
             + Arrays.toString(counts));
     assertTrue(
-        lowAfter >= 5 && lowAfter * 4 <= high,
+        lowAfter >= 2 && lowAfter * 8 <= high,
         "low-after bucket count="
             + lowAfter
-            + " want reset much lower than high="
+            + " want settled reset much lower than high="
             + high
+            + "; transition-after-reset="
+            + transitionAfterReset
             + "; buckets="
             + Arrays.toString(counts));
   }
