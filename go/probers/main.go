@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"reflect"
 	"syscall"
 	"time"
 
@@ -57,7 +58,7 @@ func main() {
 }
 
 func printConfig(cfg config) {
-	log.Printf("probe=%s query_mode=%s start_qps=%.2f end_qps=%.2f step_qps_percent=%.2f qps_step_interval_s=%d burst_enabled=%t burst_after_s=%d max_inflight=%d endpoint=%s insecure=%t db=%s num_rows=%d payload_size=%d max_staleness_s=%d direct_access=%t gcp_fallback=%t bypass=%t pprof_enabled=%t pprof_addr=%s otel_enabled=%t otel_service=%s",
+	log.Printf("probe=%s query_mode=%s start_qps=%.2f end_qps=%.2f step_qps_percent=%.2f qps_step_interval_s=%d burst_enabled=%t burst_after_s=%d qps_cycle_enabled=%t high_qps_hold_s=%d low_qps_hold_s=%d max_inflight=%d endpoint=%s insecure=%t db=%s num_rows=%d payload_size=%d max_staleness_s=%d direct_access=%t gcp_fallback=%t bypass=%t dcp_enabled=%t dcp_initial=%d dcp_min=%d dcp_max=%d dcp_max_rpc=%.2f dcp_min_rpc=%.2f pprof_enabled=%t pprof_addr=%s otel_enabled=%t otel_service=%s",
 		cfg.probeType,
 		cfg.queryMode,
 		cfg.startQPS,
@@ -66,6 +67,9 @@ func printConfig(cfg config) {
 		cfg.qpsStepInterval,
 		cfg.burstEnabled,
 		cfg.burstAfterSeconds,
+		cfg.qpsCycleEnabled,
+		cfg.highQPSHoldSeconds,
+		cfg.lowQPSHoldSeconds,
 		cfg.maxInflight,
 		cfg.endpoint,
 		cfg.insecure,
@@ -76,6 +80,12 @@ func printConfig(cfg config) {
 		cfg.enableDirectAccess,
 		cfg.enableGcpFallback,
 		cfg.enableBypass,
+		cfg.enableDCP,
+		cfg.dcpInitialChannels,
+		cfg.dcpMinChannels,
+		cfg.dcpMaxChannels,
+		cfg.dcpMaxRPCPerChannel,
+		cfg.dcpMinRPCPerChannel,
 		cfg.enablePprof,
 		cfg.pprofAddr,
 		cfg.enableOTEL,
@@ -101,5 +111,71 @@ func newClient(ctx context.Context, cfg config, otelState *otelRuntime) (*spanne
 		EnableEndToEndTracing:      cfg.enableSpannerEndToEndTracing,
 		EnableDirectAccess:         cfg.enableDirectAccess,
 	}
+	applyDynamicChannelPoolConfig(&clientConfig, cfg)
 	return spanner.NewClientWithConfig(ctx, cfg.databasePath, clientConfig, opts...)
+}
+
+func applyDynamicChannelPoolConfig(clientConfig *spanner.ClientConfig, cfg config) {
+	if !cfg.enableDCP {
+		return
+	}
+	v := reflect.ValueOf(clientConfig).Elem().FieldByName("DynamicChannelPoolConfig")
+	if !v.IsValid() || !v.CanSet() {
+		log.Printf("spanner_dcp_config_ignored=true reason=DynamicChannelPoolConfig_not_available")
+		return
+	}
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			v.Set(reflect.New(v.Type().Elem()))
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		log.Printf("spanner_dcp_config_ignored=true reason=DynamicChannelPoolConfig_not_struct kind=%s", v.Kind())
+		return
+	}
+	if !setStructBool(v, "DCPEnabled", true) {
+		log.Printf("spanner_dcp_config_ignored=true reason=DCPEnabled_not_available")
+		return
+	}
+	setStructInt(v, "DCPInitialChannels", cfg.dcpInitialChannels)
+	setStructInt(v, "DCPMinChannels", cfg.dcpMinChannels)
+	setStructInt(v, "DCPMaxChannels", cfg.dcpMaxChannels)
+	setStructFloat(v, "DCPMaxRPCPerChannel", cfg.dcpMaxRPCPerChannel)
+	setStructFloat(v, "DCPMinRPCPerChannel", cfg.dcpMinRPCPerChannel)
+}
+
+func setStructBool(v reflect.Value, name string, value bool) bool {
+	f := v.FieldByName(name)
+	if f.IsValid() && f.CanSet() && f.Kind() == reflect.Bool {
+		f.SetBool(value)
+		return true
+	}
+	return false
+}
+
+func setStructInt(v reflect.Value, name string, value int) bool {
+	if value == 0 {
+		return true
+	}
+	f := v.FieldByName(name)
+	if f.IsValid() && f.CanSet() && f.Kind() >= reflect.Int && f.Kind() <= reflect.Int64 {
+		f.SetInt(int64(value))
+		return true
+	}
+	log.Printf("spanner_dcp_field_ignored=true field=%s value=%d", name, value)
+	return false
+}
+
+func setStructFloat(v reflect.Value, name string, value float64) bool {
+	if value == 0 {
+		return true
+	}
+	f := v.FieldByName(name)
+	if f.IsValid() && f.CanSet() && (f.Kind() == reflect.Float32 || f.Kind() == reflect.Float64) {
+		f.SetFloat(value)
+		return true
+	}
+	log.Printf("spanner_dcp_field_ignored=true field=%s value=%f", name, value)
+	return false
 }

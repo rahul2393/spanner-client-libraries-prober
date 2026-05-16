@@ -1,0 +1,63 @@
+name: Probers CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-probers:
+    name: Go probers
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go/probers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/probers/go.mod
+          cache-dependency-path: go/probers/go.sum
+
+      - name: Check formatting
+        run: |
+          test -z "$(gofmt -l .)"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build ./...
+
+  java-probers:
+    name: Java probers
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: java/probers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Test
+        run: mvn --batch-mode test
+
+      - name: Package
+        run: mvn --batch-mode -DskipTests package

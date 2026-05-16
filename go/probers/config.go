@@ -22,6 +22,8 @@ const (
 	defaultLogIntervalSeconds = 10
 	defaultQpsStepInterval    = 60
 	defaultBurstAfterSeconds  = 900
+	defaultHighQPSHoldSeconds = 300
+	defaultLowQPSHoldSeconds  = 300
 	defaultPprofAddr          = ":6060"
 
 	defaultOTELServiceName                = "irahul-gloadtest"
@@ -50,6 +52,9 @@ type config struct {
 	qpsStepInterval     int
 	burstEnabled        bool
 	burstAfterSeconds   int
+	qpsCycleEnabled     bool
+	highQPSHoldSeconds  int
+	lowQPSHoldSeconds   int
 	numRows             int64
 	payloadSize         int
 	maxStalenessSeconds int64
@@ -62,6 +67,12 @@ type config struct {
 	enableDirectAccess             bool
 	enableGcpFallback              bool
 	enableBypass                   bool
+	enableDCP                      bool
+	dcpInitialChannels             int
+	dcpMinChannels                 int
+	dcpMaxChannels                 int
+	dcpMaxRPCPerChannel            float64
+	dcpMinRPCPerChannel            float64
 	enableOTEL                     bool
 	otelProjectID                  string
 	otelServiceName                string
@@ -89,6 +100,9 @@ func loadConfig() (config, error) {
 		qpsStepInterval:     getEnvIntAny([]string{"QPS_STEP_INTERVAL_SECONDS", "INTERVAL_SECONDS"}, defaultQpsStepInterval),
 		burstEnabled:        getEnvBoolAny([]string{"BURST_ENABLED", "BURST_MODE"}, false),
 		burstAfterSeconds:   getEnvInt("BURST_AFTER_SECONDS", defaultBurstAfterSeconds),
+		qpsCycleEnabled:     getEnvBoolAny([]string{"QPS_CYCLE_ENABLED", "CYCLE_ENABLED"}, false),
+		highQPSHoldSeconds:  getEnvInt("HIGH_QPS_HOLD_SECONDS", defaultHighQPSHoldSeconds),
+		lowQPSHoldSeconds:   getEnvInt("LOW_QPS_HOLD_SECONDS", defaultLowQPSHoldSeconds),
 		numRows:             getEnvInt64("NUM_ROWS", defaultNumRows),
 		payloadSize:         getEnvInt("PAYLOAD_SIZE", defaultPayloadSize),
 		maxStalenessSeconds: getEnvInt64("MAX_STALENESS_SECONDS", defaultMaxStalenessSecond),
@@ -101,6 +115,12 @@ func loadConfig() (config, error) {
 		enableDirectAccess:             getEnvBool("GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS", false),
 		enableGcpFallback:              getEnvBool("GOOGLE_SPANNER_ENABLE_GCP_FALLBACK", false),
 		enableBypass:                   getEnvBool("GOOGLE_SPANNER_EXPERIMENTAL_LOCATION_API", false),
+		enableDCP:                      getEnvBoolAny([]string{"SPANNER_DCP_ENABLED", "DCP_ENABLED"}, false),
+		dcpInitialChannels:             getEnvInt("SPANNER_DCP_INITIAL_CHANNELS", 0),
+		dcpMinChannels:                 getEnvInt("SPANNER_DCP_MIN_CHANNELS", 0),
+		dcpMaxChannels:                 getEnvInt("SPANNER_DCP_MAX_CHANNELS", 0),
+		dcpMaxRPCPerChannel:            getEnvFloat64("SPANNER_DCP_MAX_RPC_PER_CHANNEL", 0),
+		dcpMinRPCPerChannel:            getEnvFloat64("SPANNER_DCP_MIN_RPC_PER_CHANNEL", 0),
 		enableOTEL:                     getEnvBool("OTEL_ENABLED", true),
 		otelProjectID:                  getEnv("OTEL_PROJECT_ID", defaultOTELProjectID),
 		otelServiceName:                getEnv("OTEL_SERVICE_NAME", defaultOTELServiceName),
@@ -114,6 +134,10 @@ func loadConfig() (config, error) {
 	if cfg.databasePath == "" {
 		cfg.databasePath = fmt.Sprintf("projects/%s/instances/%s/databases/%s", cfg.project, cfg.instance, cfg.database)
 	}
+	return validateConfig(cfg)
+}
+
+func validateConfig(cfg config) (config, error) {
 	switch {
 	case cfg.startQPS <= 0:
 		return cfg, fmt.Errorf("START_QPS/QPS must be > 0, got %f", cfg.startQPS)
@@ -125,6 +149,18 @@ func loadConfig() (config, error) {
 		return cfg, fmt.Errorf("QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0, got %d", cfg.qpsStepInterval)
 	case cfg.burstAfterSeconds < 0:
 		return cfg, fmt.Errorf("BURST_AFTER_SECONDS must be >= 0, got %d", cfg.burstAfterSeconds)
+	case cfg.highQPSHoldSeconds < 0:
+		return cfg, fmt.Errorf("HIGH_QPS_HOLD_SECONDS must be >= 0, got %d", cfg.highQPSHoldSeconds)
+	case cfg.lowQPSHoldSeconds < 0:
+		return cfg, fmt.Errorf("LOW_QPS_HOLD_SECONDS must be >= 0, got %d", cfg.lowQPSHoldSeconds)
+	case cfg.qpsCycleEnabled && cfg.endQPS <= cfg.startQPS:
+		return cfg, fmt.Errorf("END_QPS must be greater than START_QPS/QPS when QPS_CYCLE_ENABLED=true, got start=%f end=%f", cfg.startQPS, cfg.endQPS)
+	case cfg.qpsCycleEnabled && cfg.burstEnabled && cfg.highQPSHoldSeconds <= 0:
+		return cfg, fmt.Errorf("HIGH_QPS_HOLD_SECONDS must be > 0 for burst QPS_CYCLE_ENABLED=true")
+	case cfg.qpsCycleEnabled && !cfg.burstEnabled && cfg.lowQPSHoldSeconds <= 0:
+		return cfg, fmt.Errorf("LOW_QPS_HOLD_SECONDS must be > 0 for non-burst QPS_CYCLE_ENABLED=true")
+	case cfg.qpsCycleEnabled && !cfg.burstEnabled && cfg.stepQPSPercent <= 0:
+		return cfg, fmt.Errorf("STEP_QPS_PERCENT/STEP_QPS must be > 0 for non-burst QPS_CYCLE_ENABLED=true")
 	case cfg.numRows <= 0:
 		return cfg, fmt.Errorf("NUM_ROWS must be > 0, got %d", cfg.numRows)
 	case cfg.payloadSize <= 0:
@@ -139,6 +175,16 @@ func loadConfig() (config, error) {
 		return cfg, fmt.Errorf("LOG_INTERVAL_SECONDS must be > 0, got %d", cfg.logIntervalSeconds)
 	case cfg.enablePprof && strings.TrimSpace(cfg.pprofAddr) == "":
 		return cfg, fmt.Errorf("PPROF_ADDR must be non-empty when PPROF_ENABLED=true")
+	case cfg.dcpInitialChannels < 0:
+		return cfg, fmt.Errorf("SPANNER_DCP_INITIAL_CHANNELS must be >= 0, got %d", cfg.dcpInitialChannels)
+	case cfg.dcpMinChannels < 0:
+		return cfg, fmt.Errorf("SPANNER_DCP_MIN_CHANNELS must be >= 0, got %d", cfg.dcpMinChannels)
+	case cfg.dcpMaxChannels < 0:
+		return cfg, fmt.Errorf("SPANNER_DCP_MAX_CHANNELS must be >= 0, got %d", cfg.dcpMaxChannels)
+	case cfg.dcpMaxRPCPerChannel < 0:
+		return cfg, fmt.Errorf("SPANNER_DCP_MAX_RPC_PER_CHANNEL must be >= 0, got %f", cfg.dcpMaxRPCPerChannel)
+	case cfg.dcpMinRPCPerChannel < 0:
+		return cfg, fmt.Errorf("SPANNER_DCP_MIN_RPC_PER_CHANNEL must be >= 0, got %f", cfg.dcpMinRPCPerChannel)
 	case cfg.otelTraceSamplingFraction < 0 || cfg.otelTraceSamplingFraction > 1:
 		return cfg, fmt.Errorf("OTEL_TRACE_SAMPLING_FRACTION must be in [0,1], got %f", cfg.otelTraceSamplingFraction)
 	case cfg.otelMetricExportIntervalSecond <= 0:

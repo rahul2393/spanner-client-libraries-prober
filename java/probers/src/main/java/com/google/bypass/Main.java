@@ -37,13 +37,6 @@ import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
 
@@ -55,15 +48,25 @@ final class Main {
   // Configuration via environment variables with defaults
   private static double startQps = envDoubleAny(new String[] {"START_QPS", "QPS"}, 4.0);
   private static double endQps = envDouble("END_QPS", 0.0);
-  private static double stepQpsPercent = envDoubleAny(new String[] {"STEP_QPS_PERCENT", "STEP_QPS"}, 0.0);
-  private static int qpsStepIntervalSeconds = envIntAny(new String[] {"QPS_STEP_INTERVAL_SECONDS", "INTERVAL_SECONDS"}, 60);
-  private static boolean burstEnabled = envBoolAny(new String[] {"BURST_ENABLED", "BURST_MODE"}, false);
+  private static double stepQpsPercent =
+      envDoubleAny(new String[] {"STEP_QPS_PERCENT", "STEP_QPS"}, 0.0);
+  private static int qpsStepIntervalSeconds =
+      envIntAny(new String[] {"QPS_STEP_INTERVAL_SECONDS", "INTERVAL_SECONDS"}, 60);
+  private static boolean burstEnabled =
+      envBoolAny(new String[] {"BURST_ENABLED", "BURST_MODE"}, false);
   private static int burstAfterSeconds = envInt("BURST_AFTER_SECONDS", 900);
+  private static boolean qpsCycleEnabled =
+      envBoolAny(new String[] {"QPS_CYCLE_ENABLED", "CYCLE_ENABLED"}, false);
+  private static int highQpsHoldSeconds = envInt("HIGH_QPS_HOLD_SECONDS", 300);
+  private static int lowQpsHoldSeconds = envInt("LOW_QPS_HOLD_SECONDS", 300);
   private static int maxInflight = envIntAny(new String[] {"MAX_INFLIGHT", "PARALLELISM"}, 64);
   private static int logIntervalSeconds = envInt("LOG_INTERVAL_SECONDS", 10);
   private static boolean enableBypass = envBool("GOOGLE_SPANNER_EXPERIMENTAL_LOCATION_API", false);
   private static boolean enableGrpcGcp = envBool("ENABLE_GRPC_GCP", true);
-  private static boolean enableDynamicChannelPool = envBool("ENABLE_DYNAMIC_CHANNEL_POOL", false);
+  private static boolean enableDynamicChannelPool =
+      envBoolAny(
+          new String[] {"ENABLE_DYNAMIC_CHANNEL_POOL", "SPANNER_DCP_ENABLED", "DCP_ENABLED"},
+          false);
   private static boolean disableDynamicChannelPool = envBool("DISABLE_DYNAMIC_CHANNEL_POOL", false);
   private static boolean useOtelForSpannerTracing =
       envBool("SPANNER_USE_OPENTELEMETRY_TRACING", true);
@@ -152,17 +155,23 @@ final class Main {
     }
     if (stepQpsPercent < 0) {
       throw new IllegalArgumentException(
-          "STEP_QPS_PERCENT/STEP_QPS must be >= 0. Current value: " + stepQpsPercent);
+          "STEP_QPS_PERCENT/STEP_QPS must be >= 0. Current value: "
+              + stepQpsPercent);
     }
     if (qpsStepIntervalSeconds <= 0) {
       throw new IllegalArgumentException(
           "QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0. Current value: "
               + qpsStepIntervalSeconds);
     }
-    if (burstAfterSeconds < 0) {
-      throw new IllegalArgumentException(
-          "BURST_AFTER_SECONDS must be >= 0. Current value: " + burstAfterSeconds);
-    }
+    QpsController.validateKnobs(
+        startQps,
+        endQps,
+        stepQpsPercent,
+        burstEnabled,
+        burstAfterSeconds,
+        qpsCycleEnabled,
+        highQpsHoldSeconds,
+        lowQpsHoldSeconds);
     if (maxInflight <= 0) {
       throw new IllegalArgumentException("MAX_INFLIGHT must be > 0. Current value: " + maxInflight);
     }
@@ -174,6 +183,9 @@ final class Main {
     System.out.println("QPS step interval seconds: " + qpsStepIntervalSeconds);
     System.out.println("Burst enabled: " + burstEnabled);
     System.out.println("Burst after seconds: " + burstAfterSeconds);
+    System.out.println("QPS cycle enabled: " + qpsCycleEnabled);
+    System.out.println("High QPS hold seconds: " + highQpsHoldSeconds);
+    System.out.println("Low QPS hold seconds: " + lowQpsHoldSeconds);
     System.out.println("Max in-flight: " + maxInflight);
     System.out.println("Log interval seconds: " + logIntervalSeconds);
     System.out.println("Enable bypass: " + enableBypass);
@@ -252,27 +264,16 @@ final class Main {
   }
 
   static Probe createProbe(DatabaseClient client) {
-    return switch (workload) {
-      case "stale_read" -> new StaleReadProbe(client, numRows, 15);
-      case "strong_read" -> new StrongReadProbe(client, numRows);
-      case "read_write" -> new ReadWriteProbe(client, numRows, payloadSize);
-      case "rr_occ_dml" ->
-          new DmlProbe(client, numRows, payloadSize, /* repeatableReadOcc= */ true);
-      case "write" -> new WriteProbe(client, numRows, payloadSize, true);
-      case "write_no_rp" -> new WriteProbe(client, numRows, payloadSize, false);
-      case "dml" -> new DmlProbe(client, numRows, payloadSize, /* repeatableReadOcc= */ false);
-      case "blind_dml" -> new BlindDmlProbe(client, numRows, payloadSize);
-      case "multi_blind_dml" ->
-          new MultiBlindDmlProbe(client, numRows, payloadSize, /* numDmlStatements= */ 5);
-      case "strong_query" -> new QueryProbe(client, numRows);
-      case "stale_query" -> new QueryProbe(client, numRows, maxStalenessSeconds);
-      case "multi_use_ro_query" -> new MultiUseReadOnlyQueryProbe(client, numRows);
-      case "ycsb_fixed_read" ->
-          new YcsbFixedReadProbe(client, ycsbTable, ycsbKey, ycsbUserId, ycsbZeroPadding);
-      default -> {
-        throw new IllegalArgumentException("Unsupported workload: " + workload);
-      }
-    };
+    return ProbeFactory.create(
+        client,
+        workload,
+        numRows,
+        payloadSize,
+        maxStalenessSeconds,
+        ycsbTable,
+        ycsbKey,
+        ycsbUserId,
+        ycsbZeroPadding);
   }
 
   private static void configureLogging() throws IOException {
@@ -291,145 +292,49 @@ final class Main {
   }
 
   static void startProbe(Probe probe) {
-    warmup(probe);
-
-    ExecutorService executor = Executors.newFixedThreadPool(maxInflight);
-    ScheduledExecutorService controlScheduler = Executors.newScheduledThreadPool(2);
-    Semaphore permits = new Semaphore(maxInflight);
-    AtomicReference<Double> targetQps = new AtomicReference<>(startQps);
-    AtomicLong successTotal = new AtomicLong();
-    AtomicLong errorTotal = new AtomicLong();
-    AtomicLong droppedTotal = new AtomicLong();
-    AtomicLong successInterval = new AtomicLong();
-    AtomicLong errorInterval = new AtomicLong();
-    AtomicLong droppedInterval = new AtomicLong();
-    AtomicLong totalLatencyMicros = new AtomicLong();
-
-    scheduleQpsControl(controlScheduler, targetQps);
-    controlScheduler.scheduleAtFixedRate(
-        () -> {
-          long ok = successInterval.getAndSet(0);
-          long errors = errorInterval.getAndSet(0);
-          long dropped = droppedInterval.getAndSet(0);
-          long completed = ok + errors;
-          long avgLatencyMicros =
-              completed == 0 ? 0 : totalLatencyMicros.getAndSet(0) / completed;
-          double actualQps = (ok + errors) / (double) logIntervalSeconds;
-          logger.info(
-              String.format(
-                  "stats target_qps=%.2f actual_qps=%.2f ok=%d err=%d dropped=%d total_ok=%d total_err=%d total_dropped=%d inflight=%d max_inflight=%d avg_latency_us=%d",
-                  targetQps.get(),
-                  actualQps,
-                  ok,
-                  errors,
-                  dropped,
-                  successTotal.get(),
-                  errorTotal.get(),
-                  droppedTotal.get(),
-                  maxInflight - permits.availablePermits(),
-                  maxInflight,
-                  avgLatencyMicros));
-        },
-        logIntervalSeconds,
-        logIntervalSeconds,
-        TimeUnit.SECONDS);
-
-    Thread dispatcher =
-        new Thread(
-            () -> {
-              while (!Thread.currentThread().isInterrupted()) {
-                double currentQps = Math.max(0.001d, targetQps.get());
-                long sleepNanos = Math.max(1L, Math.round(1_000_000_000d / currentQps));
-                try {
-                  TimeUnit.NANOSECONDS.sleep(sleepNanos);
-                } catch (InterruptedException e) {
-                  Thread.currentThread().interrupt();
-                  return;
-                }
-                if (!permits.tryAcquire()) {
-                  droppedTotal.incrementAndGet();
-                  droppedInterval.incrementAndGet();
-                  continue;
-                }
-                executor.execute(
-                    () -> {
-                      Span span =
-                          tracer
-                              .spanBuilder("probe." + probe.getName())
-                              .setAttribute("probe.type", probe.getName())
-                              .setAttribute("probe.bypass_enabled", enableBypass)
-                              .setAttribute("probe.host", HOST)
-                              .startSpan();
-                      long start = System.nanoTime();
-                      boolean success = false;
-                      try (Scope unused = span.makeCurrent()) {
-                        probe.probe();
-                        success = true;
-                      } catch (Throwable t) {
-                        span.setStatus(StatusCode.ERROR, t.getMessage());
-                        span.recordException(t);
-                        t.printStackTrace(System.err);
-                      } finally {
-                        long latencyMicros = (System.nanoTime() - start) / 1000L;
-                        span.setAttribute("probe.latency_ms", latencyMicros / 1000.0);
-                        span.end();
-                        updateProbeStats(start);
-                        totalLatencyMicros.addAndGet(latencyMicros);
-                        if (success) {
-                          successTotal.incrementAndGet();
-                          successInterval.incrementAndGet();
-                        } else {
-                          errorTotal.incrementAndGet();
-                          errorInterval.incrementAndGet();
-                        }
-                        permits.release();
-                      }
-                    });
-              }
-            },
-            "probe-dispatcher");
-    dispatcher.start();
+    ProbeRunner.start(
+        probe,
+        new ProbeRunner.Options(
+            startQps,
+            endQps,
+            stepQpsPercent,
+            qpsStepIntervalSeconds,
+            burstEnabled,
+            burstAfterSeconds,
+            qpsCycleEnabled,
+            highQpsHoldSeconds,
+            lowQpsHoldSeconds,
+            maxInflight,
+            logIntervalSeconds,
+            DEFAULT_WARMUP_CYCLES,
+            Duration.ofSeconds(1)),
+        Main::invokeProbe);
   }
 
-  private static void scheduleQpsControl(
-      ScheduledExecutorService controlScheduler, AtomicReference<Double> targetQps) {
-    Runnable startStepping =
-        () -> {
-          if (qpsStepIntervalSeconds > 0 && stepQpsPercent > 0) {
-            controlScheduler.scheduleAtFixedRate(
-                () -> stepQps(targetQps),
-                qpsStepIntervalSeconds,
-                qpsStepIntervalSeconds,
-                TimeUnit.SECONDS);
-          }
-        };
-    if (burstEnabled) {
-      controlScheduler.schedule(
-          () -> {
-            if (endQps > 0) {
-              double old = targetQps.getAndSet(endQps);
-              logger.info(String.format("burst qps from %.2f to %.2f", old, endQps));
-            }
-            startStepping.run();
-          },
-          burstAfterSeconds,
-          TimeUnit.SECONDS);
-    } else {
-      startStepping.run();
+  private static boolean invokeProbe(Probe probe) {
+    Span span =
+        tracer
+            .spanBuilder("probe." + probe.getName())
+            .setAttribute("probe.type", probe.getName())
+            .setAttribute("probe.bypass_enabled", enableBypass)
+            .setAttribute("probe.host", HOST)
+            .startSpan();
+    long start = System.nanoTime();
+    boolean success = false;
+    try (Scope unused = span.makeCurrent()) {
+      probe.probe();
+      success = true;
+    } catch (Throwable t) {
+      span.setStatus(StatusCode.ERROR, t.getMessage());
+      span.recordException(t);
+      t.printStackTrace(System.err);
+    } finally {
+      long latencyMicros = (System.nanoTime() - start) / 1000L;
+      span.setAttribute("probe.latency_ms", latencyMicros / 1000.0);
+      span.end();
+      updateProbeStats(start);
     }
-  }
-
-  private static void stepQps(AtomicReference<Double> targetQps) {
-    double current = targetQps.get();
-    if (endQps > 0 && current >= endQps) {
-      return;
-    }
-    double next = current + (current * stepQpsPercent / 100.0);
-    if (endQps > 0) {
-      next = Math.min(next, endQps);
-    }
-    targetQps.set(next);
-    logger.info(String.format("step qps from %.2f to %.2f", current, next));
+    return success;
   }
 
   private static void registerMemoryMetrics() {
