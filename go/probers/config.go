@@ -85,6 +85,7 @@ type config struct {
 	otelProjectID                  string
 	otelServiceName                string
 	otelMetricPrefix               string
+	otelExportDebug                bool
 	otelTraceSamplingFraction      float64
 	otelMetricExportIntervalSecond int
 	cloudTraceEndpoint             string
@@ -134,6 +135,7 @@ func loadConfig() (config, error) {
 		otelProjectID:                  getEnv("OTEL_PROJECT_ID", defaultOTELProjectID),
 		otelServiceName:                getEnv("OTEL_SERVICE_NAME", defaultOTELServiceName),
 		otelMetricPrefix:               getEnv("OTEL_METRIC_PREFIX", defaultOTELMetricPrefix),
+		otelExportDebug:                getEnvBool("OTEL_EXPORT_DEBUG", false),
 		otelTraceSamplingFraction:      getEnvFloat64("OTEL_TRACE_SAMPLING_FRACTION", defaultOTELTraceSamplingFraction),
 		otelMetricExportIntervalSecond: getEnvInt("OTEL_METRIC_EXPORT_INTERVAL_SECONDS", defaultOTELMetricExportIntervalSecond),
 		cloudTraceEndpoint:             normalizeEndpoint(strings.TrimSpace(os.Getenv("CLOUD_TRACE_ENDPOINT"))),

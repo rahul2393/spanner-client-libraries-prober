@@ -66,6 +66,8 @@ spec:
               value: "custom.googleapis.com/irahul"
             - name: OTEL_METRIC_EXPORT_INTERVAL_SECONDS
               value: "10"
+            - name: OTEL_EXPORT_DEBUG
+              value: "true"
 #            - name: GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS
 #              value: "true"
 #            - name: GOOGLE_SPANNER_ENABLE_GCP_FALLBACK
