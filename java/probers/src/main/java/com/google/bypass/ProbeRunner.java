@@ -5,6 +5,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -89,7 +91,13 @@ final class ProbeRunner {
   static Handle start(Probe probe, Options options, ProbeInvoker invoker) {
     warmup(probe, options.warmupCycles);
 
-    ExecutorService executor = Executors.newFixedThreadPool(options.maxInflight);
+    // Do not use newFixedThreadPool(maxInflight): maxInflight becomes the core size, so
+    // early probe dispatches create one worker per request until that limit, even when
+    // existing workers are idle. Reusing idle workers keeps burst timing from being skewed
+    // by thread-start lag; the semaphore still caps in-flight probes.
+    ExecutorService executor =
+        new ThreadPoolExecutor(
+            0, options.maxInflight, 60L, TimeUnit.SECONDS, new SynchronousQueue<>());
     ScheduledExecutorService controlScheduler = Executors.newScheduledThreadPool(2);
     Semaphore permits = new Semaphore(options.maxInflight);
     AtomicReference<Double> targetQps = new AtomicReference<>(options.startQps);
