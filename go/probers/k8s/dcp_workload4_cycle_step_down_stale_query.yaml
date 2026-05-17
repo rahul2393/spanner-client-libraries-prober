@@ -97,7 +97,11 @@ spec:
 #              value: "true"
 #            - name: GOOGLE_SPANNER_ENABLE_GCP_FALLBACK
 #              value: "true"
-#            - name: PPROF_ENABLED
-#              value: "true"
-#            - name: PPROF_ADDR
-#              value: ":6060"
+            - name: PPROF_ENABLED
+              value: "true"
+            - name: PPROF_ADDR
+              value: ":6060"
+            - name: PPROF_MUTEX_PROFILE_FRACTION
+              value: "5"
+            - name: PPROF_BLOCK_PROFILE_RATE
+              value: "1000000"
