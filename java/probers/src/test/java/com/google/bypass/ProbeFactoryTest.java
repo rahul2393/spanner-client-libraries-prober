@@ -80,6 +80,7 @@ final class ProbeFactoryTest {
         "usertable",
         "",
         "1",
-        /* ycsbZeroPadding= */ 20);
+        /* ycsbZeroPadding= */ 20,
+        /* fixedKey= */ -1);
   }
 }

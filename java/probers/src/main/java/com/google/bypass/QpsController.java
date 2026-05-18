@@ -17,30 +17,30 @@ final class QpsController {
     }
     if (highQpsHoldSeconds < 0) {
       throw new IllegalArgumentException(
-          "HIGH_QPS_HOLD_SECONDS must be >= 0. Current value: " + highQpsHoldSeconds);
+          "HIGH_LOAD_HOLD_SECONDS must be >= 0. Current value: " + highQpsHoldSeconds);
     }
     if (lowQpsHoldSeconds < 0) {
       throw new IllegalArgumentException(
-          "LOW_QPS_HOLD_SECONDS must be >= 0. Current value: " + lowQpsHoldSeconds);
+          "LOW_LOAD_HOLD_SECONDS must be >= 0. Current value: " + lowQpsHoldSeconds);
     }
     if (qpsCycleEnabled && endQps <= startQps) {
       throw new IllegalArgumentException(
           String.format(
-              "END_QPS must be greater than START_QPS/QPS when QPS_CYCLE_ENABLED=true. "
+              "END_LOAD must be greater than START_LOAD when LOAD_CYCLE_ENABLED=true. "
                   + "start=%.2f end=%.2f",
               startQps, endQps));
     }
     if (qpsCycleEnabled && burstEnabled && highQpsHoldSeconds <= 0) {
       throw new IllegalArgumentException(
-          "HIGH_QPS_HOLD_SECONDS must be > 0 for burst QPS_CYCLE_ENABLED=true.");
+          "HIGH_LOAD_HOLD_SECONDS must be > 0 for burst LOAD_CYCLE_ENABLED=true.");
     }
     if (qpsCycleEnabled && !burstEnabled && lowQpsHoldSeconds <= 0) {
       throw new IllegalArgumentException(
-          "LOW_QPS_HOLD_SECONDS must be > 0 for non-burst QPS_CYCLE_ENABLED=true.");
+          "LOW_LOAD_HOLD_SECONDS must be > 0 for non-burst LOAD_CYCLE_ENABLED=true.");
     }
     if (qpsCycleEnabled && !burstEnabled && stepQpsPercent <= 0) {
       throw new IllegalArgumentException(
-          "STEP_QPS_PERCENT/STEP_QPS must be > 0 for non-burst QPS_CYCLE_ENABLED=true.");
+          "STEP_LOAD_PERCENT/STEP_QPS must be > 0 for non-burst LOAD_CYCLE_ENABLED=true.");
     }
   }
 

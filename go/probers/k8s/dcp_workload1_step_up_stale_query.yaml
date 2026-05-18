@@ -32,15 +32,17 @@ spec:
           env:
             - name: PROBE_TYPE
               value: "stale_query"
+            - name: FIXED_KEY
+              value: "12345"
             - name: LOAD_MODE
               value: "concurrency"
-            - name: START_QPS
+            - name: START_LOAD
               value: "50"
-            - name: END_QPS
+            - name: END_LOAD
               value: "600"
-            - name: STEP_QPS_PERCENT
+            - name: STEP_LOAD_PERCENT
               value: "25"
-            - name: QPS_STEP_INTERVAL_SECONDS
+            - name: LOAD_STEP_INTERVAL_SECONDS
               value: "60"
             - name: MAX_INFLIGHT
               value: "600"
@@ -62,6 +64,8 @@ spec:
               value: "span-cloud-testing"
             - name: OTEL_SERVICE_NAME
               value: "irahul-go-dcp-workload1-step-up"
+            - name: OTEL_TRACE_SAMPLING_FRACTION
+              value: "0"
             - name: OTEL_METRIC_PREFIX
               value: "custom.googleapis.com/irahul"
             - name: OTEL_METRIC_EXPORT_INTERVAL_SECONDS

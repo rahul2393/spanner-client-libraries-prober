@@ -100,20 +100,23 @@ func initializeOpenTelemetry(ctx context.Context, cfg config) (*otelRuntime, err
 		resourceTaskID,
 	)
 
-	traceOpts := []gcptrace.Option{gcptrace.WithProjectID(cfg.otelProjectID)}
-	if cfg.cloudTraceEndpoint != "" {
-		traceOpts = append(traceOpts, gcptrace.WithTraceClientOptions([]option.ClientOption{option.WithEndpoint(cfg.cloudTraceEndpoint)}))
+	var traceProvider *trace.TracerProvider
+	if cfg.otelTraceSamplingFraction > 0 {
+		traceOpts := []gcptrace.Option{gcptrace.WithProjectID(cfg.otelProjectID)}
+		if cfg.cloudTraceEndpoint != "" {
+			traceOpts = append(traceOpts, gcptrace.WithTraceClientOptions([]option.ClientOption{option.WithEndpoint(cfg.cloudTraceEndpoint)}))
+		}
+		traceExp, err := gcptrace.New(traceOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("create cloud trace exporter: %w", err)
+		}
+		traceProvider = trace.NewTracerProvider(
+			trace.WithSampler(trace.TraceIDRatioBased(cfg.otelTraceSamplingFraction)),
+			trace.WithBatcher(traceExp),
+			trace.WithResource(res),
+		)
+		otel.SetTracerProvider(traceProvider)
 	}
-	traceExp, err := gcptrace.New(traceOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("create cloud trace exporter: %w", err)
-	}
-	traceProvider := trace.NewTracerProvider(
-		trace.WithSampler(trace.TraceIDRatioBased(cfg.otelTraceSamplingFraction)),
-		trace.WithBatcher(traceExp),
-		trace.WithResource(res),
-	)
-	otel.SetTracerProvider(traceProvider)
 
 	metricOpts := []gcpmetric.Option{
 		gcpmetric.WithProjectID(cfg.otelProjectID),
@@ -167,15 +170,22 @@ func initializeOpenTelemetry(ctx context.Context, cfg config) (*otelRuntime, err
 		return nil, err
 	}
 
+	var tracer oteltrace.Tracer
+	if traceProvider != nil {
+		tracer = otel.Tracer("gloadtest")
+	}
 	return &otelRuntime{
 		shutdown: func(shutdownCtx context.Context) error {
+			if traceProvider == nil {
+				return meterProvider.Shutdown(shutdownCtx)
+			}
 			return errors.Join(
 				meterProvider.Shutdown(shutdownCtx),
 				traceProvider.Shutdown(shutdownCtx),
 			)
 		},
 		meterProvider:    meterProvider,
-		tracer:           otel.Tracer("gloadtest"),
+		tracer:           tracer,
 		requestCounter:   requestCounter,
 		latencyHistogram: latencyHistogram,
 		host:             host,

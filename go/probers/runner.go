@@ -50,48 +50,73 @@ func runWithOptions(ctx context.Context, cfg config, p probe, otelState *otelRun
 	statsTicker := time.NewTicker(time.Duration(cfg.logIntervalSeconds) * unit)
 	defer statsTicker.Stop()
 
-	targetQPS := newTargetQPS(cfg.startQPS)
-	startQPSController(ctx, cfg, targetQPS, unit)
+	targetLoad := newTargetLoad(cfg.startLoad)
+	startLoadController(ctx, cfg, targetLoad, unit)
 
 	m := &metrics{}
 	start := time.Now()
 
 	if cfg.loadMode == loadModeConcurrency {
-		runConcurrencyMode(ctx, cfg, p, otelState, statsTicker, targetQPS, m, start)
+		runConcurrencyMode(ctx, cfg, p, otelState, statsTicker, targetLoad, m, start)
 		return
 	}
 
+	runQPSMode(ctx, cfg, p, otelState, statsTicker, targetLoad, m, start, unit)
+}
+
+func runQPSMode(ctx context.Context, cfg config, p probe, otelState *otelRuntime, statsTicker *time.Ticker, targetLoad *targetLoadState, m *metrics, start time.Time, unit time.Duration) {
 	sem := make(chan struct{}, cfg.maxInflight)
+	dispatchTick := qpsDispatchTick(unit)
+	dispatchTicker := time.NewTicker(dispatchTick)
+	defer dispatchTicker.Stop()
+	last := time.Now()
+	tokens := 0.0
 	for {
-		delay := dispatchDelayForUnit(targetQPS.Load(), unit)
-		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			log.Printf("stopping (%v)", ctx.Err())
-			printSummary(m, time.Since(start), targetQPS.Load(), m.currentInflight.Load(), cfg, true)
+			printSummary(m, time.Since(start), targetLoad.Load(), m.currentInflight.Load(), cfg, true)
 			return
 		case <-statsTicker.C:
-			if !timer.Stop() {
-				<-timer.C
+			printSummary(m, time.Since(start), targetLoad.Load(), m.currentInflight.Load(), cfg, false)
+		case now := <-dispatchTicker.C:
+			target := targetLoad.Load()
+			elapsed := now.Sub(last)
+			last = now
+			tokens += target * float64(elapsed) / float64(unit)
+			if maxTokens := float64(cfg.maxInflight); tokens > maxTokens {
+				tokens = maxTokens
 			}
-			printSummary(m, time.Since(start), targetQPS.Load(), m.currentInflight.Load(), cfg, false)
-		case <-timer.C:
-			select {
-			case sem <- struct{}{}:
-				go func() {
-					defer func() { <-sem }()
-					executeProbe(ctx, p, otelState, m)
-				}()
-			default:
-				m.droppedCount.Add(1)
-				m.droppedInterval.Add(1)
+			toDispatch := int(tokens)
+			if toDispatch == 0 {
+				continue
+			}
+			tokens -= float64(toDispatch)
+			for i := 0; i < toDispatch; i++ {
+				select {
+				case sem <- struct{}{}:
+					go func() {
+						defer func() { <-sem }()
+						executeProbe(ctx, p, otelState, m)
+					}()
+				default:
+					m.droppedCount.Add(1)
+					m.droppedInterval.Add(1)
+				}
 			}
 		}
 	}
 }
 
-func runConcurrencyMode(ctx context.Context, cfg config, p probe, otelState *otelRuntime, statsTicker *time.Ticker, targetWorkers *targetQPSState, m *metrics, start time.Time) {
+func qpsDispatchTick(unit time.Duration) time.Duration {
+	tick := unit / 100
+	if tick < time.Millisecond {
+		return time.Millisecond
+	}
+	return tick
+}
+
+func runConcurrencyMode(ctx context.Context, cfg config, p probe, otelState *otelRuntime, statsTicker *time.Ticker, targetWorkers *targetLoadState, m *metrics, start time.Time) {
 	for i := 0; i < cfg.maxInflight; i++ {
 		workerNumber := i + 1
 		go func() {
@@ -204,21 +229,21 @@ func loadUnit(cfg config) string {
 	return "qps"
 }
 
-type targetQPSState struct {
+type targetLoadState struct {
 	value atomic.Uint64
 }
 
-func newTargetQPS(qps float64) *targetQPSState {
-	s := &targetQPSState{}
+func newTargetLoad(qps float64) *targetLoadState {
+	s := &targetLoadState{}
 	s.Store(qps)
 	return s
 }
 
-func (s *targetQPSState) Load() float64 {
+func (s *targetLoadState) Load() float64 {
 	return math.Float64frombits(s.value.Load())
 }
 
-func (s *targetQPSState) Store(qps float64) {
+func (s *targetLoadState) Store(qps float64) {
 	s.value.Store(math.Float64bits(qps))
 }
 
@@ -237,10 +262,10 @@ func dispatchDelayForUnit(qps float64, unit time.Duration) time.Duration {
 	return delay
 }
 
-func startQPSController(ctx context.Context, cfg config, targetQPS *targetQPSState, unit time.Duration) {
+func startLoadController(ctx context.Context, cfg config, targetLoad *targetLoadState, unit time.Duration) {
 	if cfg.burstEnabled {
-		if cfg.qpsCycleEnabled {
-			startBurstQPSCycle(ctx, cfg, targetQPS, unit)
+		if cfg.loadCycleEnabled {
+			startBurstLoadCycle(ctx, cfg, targetLoad, unit)
 			return
 		}
 		go func() {
@@ -250,66 +275,66 @@ func startQPSController(ctx context.Context, cfg config, targetQPS *targetQPSSta
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				if cfg.endQPS > 0 {
-					targetQPS.Store(cfg.endQPS)
-					log.Printf("burst_%s target_%s=%.2f", loadUnit(cfg), loadUnit(cfg), cfg.endQPS)
+				if cfg.endLoad > 0 {
+					targetLoad.Store(cfg.endLoad)
+					log.Printf("burst_%s target_%s=%.2f", loadUnit(cfg), loadUnit(cfg), cfg.endLoad)
 				}
-				startQPSRamp(ctx, cfg, targetQPS, unit)
+				startLoadRamp(ctx, cfg, targetLoad, unit)
 			}
 		}()
 		return
 	}
-	if cfg.qpsCycleEnabled {
-		startRampQPSCycle(ctx, cfg, targetQPS, unit)
+	if cfg.loadCycleEnabled {
+		startRampLoadCycle(ctx, cfg, targetLoad, unit)
 		return
 	}
-	startQPSRamp(ctx, cfg, targetQPS, unit)
+	startLoadRamp(ctx, cfg, targetLoad, unit)
 }
 
-func startBurstQPSCycle(ctx context.Context, cfg config, targetQPS *targetQPSState, unit time.Duration) {
+func startBurstLoadCycle(ctx context.Context, cfg config, targetLoad *targetLoadState, unit time.Duration) {
 	go func() {
 		for {
 			if !sleepOrDone(ctx, time.Duration(cfg.burstAfterSeconds)*unit) {
 				return
 			}
-			targetQPS.Store(cfg.endQPS)
-			log.Printf("burst_%s target_%s=%.2f hold_seconds=%d", loadUnit(cfg), loadUnit(cfg), cfg.endQPS, cfg.highQPSHoldSeconds)
-			if !sleepOrDone(ctx, time.Duration(cfg.highQPSHoldSeconds)*unit) {
+			targetLoad.Store(cfg.endLoad)
+			log.Printf("burst_%s target_%s=%.2f hold_seconds=%d", loadUnit(cfg), loadUnit(cfg), cfg.endLoad, cfg.highLoadHoldSeconds)
+			if !sleepOrDone(ctx, time.Duration(cfg.highLoadHoldSeconds)*unit) {
 				return
 			}
-			targetQPS.Store(cfg.startQPS)
-			log.Printf("reset_%s target_%s=%.2f hold_seconds=%d", loadUnit(cfg), loadUnit(cfg), cfg.startQPS, cfg.burstAfterSeconds)
+			targetLoad.Store(cfg.startLoad)
+			log.Printf("reset_%s target_%s=%.2f hold_seconds=%d", loadUnit(cfg), loadUnit(cfg), cfg.startLoad, cfg.burstAfterSeconds)
 		}
 	}()
 }
 
-func startRampQPSCycle(ctx context.Context, cfg config, targetQPS *targetQPSState, unit time.Duration) {
+func startRampLoadCycle(ctx context.Context, cfg config, targetLoad *targetLoadState, unit time.Duration) {
 	go func() {
 		direction := 1
-		ticker := time.NewTicker(time.Duration(cfg.qpsStepInterval) * unit)
+		ticker := time.NewTicker(time.Duration(cfg.loadStepInterval) * unit)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				current := targetQPS.Load()
+				current := targetLoad.Load()
 				if direction > 0 {
-					next := stepUpQPS(current, cfg.endQPS, cfg.stepQPSPercent)
-					if next == cfg.endQPS {
+					next := stepUpQPS(current, cfg.endLoad, cfg.stepLoadPercent)
+					if next == cfg.endLoad {
 						direction = -1
 					}
-					targetQPS.Store(next)
+					targetLoad.Store(next)
 					log.Printf("step_up_%s old_%s=%.2f new_%s=%.2f", loadUnit(cfg), loadUnit(cfg), current, loadUnit(cfg), next)
 					continue
 				}
 
-				next := stepDownQPS(current, cfg.startQPS, cfg.stepQPSPercent)
-				targetQPS.Store(next)
+				next := stepDownQPS(current, cfg.startLoad, cfg.stepLoadPercent)
+				targetLoad.Store(next)
 				log.Printf("step_down_%s old_%s=%.2f new_%s=%.2f", loadUnit(cfg), loadUnit(cfg), current, loadUnit(cfg), next)
-				if next == cfg.startQPS {
-					log.Printf("low_%s_hold target_%s=%.2f hold_seconds=%d", loadUnit(cfg), loadUnit(cfg), cfg.startQPS, cfg.lowQPSHoldSeconds)
-					if !sleepOrDone(ctx, time.Duration(cfg.lowQPSHoldSeconds)*unit) {
+				if next == cfg.startLoad {
+					log.Printf("low_%s_hold target_%s=%.2f hold_seconds=%d", loadUnit(cfg), loadUnit(cfg), cfg.startLoad, cfg.lowLoadHoldSeconds)
+					if !sleepOrDone(ctx, time.Duration(cfg.lowLoadHoldSeconds)*unit) {
 						return
 					}
 					direction = 1
@@ -319,24 +344,24 @@ func startRampQPSCycle(ctx context.Context, cfg config, targetQPS *targetQPSStat
 	}()
 }
 
-func startQPSRamp(ctx context.Context, cfg config, targetQPS *targetQPSState, unit time.Duration) {
-	if cfg.stepQPSPercent <= 0 {
+func startLoadRamp(ctx context.Context, cfg config, targetLoad *targetLoadState, unit time.Duration) {
+	if cfg.stepLoadPercent <= 0 {
 		return
 	}
 	go func() {
-		ticker := time.NewTicker(time.Duration(cfg.qpsStepInterval) * unit)
+		ticker := time.NewTicker(time.Duration(cfg.loadStepInterval) * unit)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				current := targetQPS.Load()
-				if cfg.endQPS > 0 && current >= cfg.endQPS {
+				current := targetLoad.Load()
+				if cfg.endLoad > 0 && current >= cfg.endLoad {
 					continue
 				}
-				next := stepUpQPS(current, cfg.endQPS, cfg.stepQPSPercent)
-				targetQPS.Store(next)
+				next := stepUpQPS(current, cfg.endLoad, cfg.stepLoadPercent)
+				targetLoad.Store(next)
 				log.Printf("step_%s old_%s=%.2f new_%s=%.2f", loadUnit(cfg), loadUnit(cfg), current, loadUnit(cfg), next)
 			}
 		}
@@ -382,7 +407,7 @@ func warmup(ctx context.Context, p probe, cycles int) error {
 	return nil
 }
 
-func printSummary(m *metrics, elapsed time.Duration, targetQPS float64, inflight int64, cfg config, final bool) {
+func printSummary(m *metrics, elapsed time.Duration, targetLoad float64, inflight int64, cfg config, final bool) {
 	ok := m.okCount.Load()
 	errs := m.errorCount.Load()
 	dropped := m.droppedCount.Load()
@@ -404,10 +429,10 @@ func printSummary(m *metrics, elapsed time.Duration, targetQPS float64, inflight
 	}
 	if final {
 		if cfg.loadMode == loadModeConcurrency {
-			log.Printf("stats elapsed=%s load_mode=concurrency target_workers=%d ok=%d err=%d dropped=%d avg_latency_us=%d achieved_qps=%.2f inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d final=true", elapsed.Truncate(time.Second), targetWorkerCount(targetQPS, cfg), ok, errs, dropped, avgLatMic, achievedQPS, inflight, avgInflight, maxInflightSeen, cfg.maxInflight)
+			log.Printf("stats elapsed=%s load_mode=concurrency target_workers=%d ok=%d err=%d dropped=%d avg_latency_us=%d achieved_qps=%.2f inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d final=true", elapsed.Truncate(time.Second), targetWorkerCount(targetLoad, cfg), ok, errs, dropped, avgLatMic, achievedQPS, inflight, avgInflight, maxInflightSeen, cfg.maxInflight)
 			return
 		}
-		log.Printf("stats elapsed=%s load_mode=qps target_qps=%.2f ok=%d err=%d dropped=%d avg_latency_us=%d achieved_qps=%.2f inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d final=true", elapsed.Truncate(time.Second), targetQPS, ok, errs, dropped, avgLatMic, achievedQPS, inflight, avgInflight, maxInflightSeen, cfg.maxInflight)
+		log.Printf("stats elapsed=%s load_mode=qps target_qps=%.2f ok=%d err=%d dropped=%d avg_latency_us=%d achieved_qps=%.2f inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d final=true", elapsed.Truncate(time.Second), targetLoad, ok, errs, dropped, avgLatMic, achievedQPS, inflight, avgInflight, maxInflightSeen, cfg.maxInflight)
 		return
 	}
 
@@ -422,8 +447,8 @@ func printSummary(m *metrics, elapsed time.Duration, targetQPS float64, inflight
 	}
 	actualQPS := float64(intervalCompleted) / float64(cfg.logIntervalSeconds)
 	if cfg.loadMode == loadModeConcurrency {
-		log.Printf("stats elapsed=%s load_mode=concurrency target_workers=%d actual_qps=%.2f ok=%d err=%d dropped=%d total_ok=%d total_err=%d total_dropped=%d inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d avg_latency_us=%d", elapsed.Truncate(time.Second), targetWorkerCount(targetQPS, cfg), actualQPS, intervalOK, intervalErr, intervalDropped, ok, errs, dropped, inflight, avgInflight, maxInflightSeen, cfg.maxInflight, intervalAvgLatMic)
+		log.Printf("stats elapsed=%s load_mode=concurrency target_workers=%d actual_qps=%.2f ok=%d err=%d dropped=%d total_ok=%d total_err=%d total_dropped=%d inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d avg_latency_us=%d", elapsed.Truncate(time.Second), targetWorkerCount(targetLoad, cfg), actualQPS, intervalOK, intervalErr, intervalDropped, ok, errs, dropped, inflight, avgInflight, maxInflightSeen, cfg.maxInflight, intervalAvgLatMic)
 		return
 	}
-	log.Printf("stats elapsed=%s load_mode=qps target_qps=%.2f actual_qps=%.2f ok=%d err=%d dropped=%d total_ok=%d total_err=%d total_dropped=%d inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d avg_latency_us=%d", elapsed.Truncate(time.Second), targetQPS, actualQPS, intervalOK, intervalErr, intervalDropped, ok, errs, dropped, inflight, avgInflight, maxInflightSeen, cfg.maxInflight, intervalAvgLatMic)
+	log.Printf("stats elapsed=%s load_mode=qps target_qps=%.2f actual_qps=%.2f ok=%d err=%d dropped=%d total_ok=%d total_err=%d total_dropped=%d inflight=%d avg_inflight=%.2f max_inflight_seen=%d max_inflight=%d avg_latency_us=%d", elapsed.Truncate(time.Second), targetLoad, actualQPS, intervalOK, intervalErr, intervalDropped, ok, errs, dropped, inflight, avgInflight, maxInflightSeen, cfg.maxInflight, intervalAvgLatMic)
 }

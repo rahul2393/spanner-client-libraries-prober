@@ -42,10 +42,10 @@ func TestTestNoopProbeConfigCases(t *testing.T) {
 			name: "dcp ramp cycle",
 			cfg: func() config {
 				cfg := validTestNoopConfig(true)
-				cfg.endQPS = 1000
-				cfg.stepQPSPercent = 50
-				cfg.qpsCycleEnabled = true
-				cfg.lowQPSHoldSeconds = 1
+				cfg.endLoad = 1000
+				cfg.stepLoadPercent = 50
+				cfg.loadCycleEnabled = true
+				cfg.lowLoadHoldSeconds = 1
 				return cfg
 			}(),
 		},
@@ -53,11 +53,11 @@ func TestTestNoopProbeConfigCases(t *testing.T) {
 			name: "dcp burst cycle",
 			cfg: func() config {
 				cfg := validTestNoopConfig(true)
-				cfg.endQPS = 1000
+				cfg.endLoad = 1000
 				cfg.burstEnabled = true
 				cfg.burstAfterSeconds = 0
-				cfg.qpsCycleEnabled = true
-				cfg.highQPSHoldSeconds = 1
+				cfg.loadCycleEnabled = true
+				cfg.highLoadHoldSeconds = 1
 				return cfg
 			}(),
 		},
@@ -65,11 +65,11 @@ func TestTestNoopProbeConfigCases(t *testing.T) {
 			name: "no dcp burst cycle",
 			cfg: func() config {
 				cfg := validTestNoopConfig(false)
-				cfg.endQPS = 1000
+				cfg.endLoad = 1000
 				cfg.burstEnabled = true
 				cfg.burstAfterSeconds = 0
-				cfg.qpsCycleEnabled = true
-				cfg.highQPSHoldSeconds = 1
+				cfg.loadCycleEnabled = true
+				cfg.highLoadHoldSeconds = 1
 				return cfg
 			}(),
 		},
@@ -111,11 +111,11 @@ func TestTestNoopProbeInjectedErrors(t *testing.T) {
 func validTestNoopConfig(enableDCP bool) config {
 	return config{
 		probeType:                      "test_noop",
-		startQPS:                       100,
-		qpsStepInterval:                1,
+		startLoad:                      100,
+		loadStepInterval:               1,
 		burstAfterSeconds:              0,
-		highQPSHoldSeconds:             1,
-		lowQPSHoldSeconds:              1,
+		highLoadHoldSeconds:            1,
+		lowLoadHoldSeconds:             1,
 		numRows:                        1,
 		payloadSize:                    1,
 		maxInflight:                    1,

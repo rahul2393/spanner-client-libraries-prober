@@ -13,6 +13,7 @@ type queryProbe struct {
 	numRows             int64
 	maxStalenessSeconds int64
 	queryMode           string
+	fixedKey            int64
 }
 
 func (p *queryProbe) Name() string {
@@ -23,7 +24,7 @@ func (p *queryProbe) Name() string {
 }
 
 func (p *queryProbe) Probe(ctx context.Context) error {
-	key := randomKey(p.numRows)
+	key := p.pickKey()
 	stmt := spanner.Statement{
 		SQL:    "SELECT Key, Value FROM T WHERE Key = @Id",
 		Params: map[string]interface{}{"Id": key},
@@ -39,4 +40,11 @@ func (p *queryProbe) Probe(ctx context.Context) error {
 	}
 	iter := ro.QueryWithOptions(ctx, stmt, queryOpts)
 	return consumeRows(iter)
+}
+
+func (p *queryProbe) pickKey() int64 {
+	if p.fixedKey >= 0 {
+		return p.fixedKey
+	}
+	return randomKey(p.numRows)
 }
