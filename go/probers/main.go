@@ -61,25 +61,26 @@ func main() {
 }
 
 func printConfig(cfg config) {
-	log.Printf("probe=%s query_mode=%s load_mode=%s start_qps=%.2f end_qps=%.2f step_qps_percent=%.2f qps_step_interval_s=%d burst_enabled=%t burst_after_s=%d qps_cycle_enabled=%t high_qps_hold_s=%d low_qps_hold_s=%d max_inflight=%d endpoint=%s insecure=%t db=%s num_rows=%d payload_size=%d max_staleness_s=%d direct_access=%t gcp_fallback=%t bypass=%t dcp_enabled=%t dcp_initial=%d dcp_min=%d dcp_max=%d dcp_max_rpc=%.2f dcp_min_rpc=%.2f pprof_enabled=%t pprof_addr=%s otel_enabled=%t otel_service=%s",
+	log.Printf("probe=%s query_mode=%s load_mode=%s start_load=%.2f end_load=%.2f step_load_percent=%.2f load_step_interval_s=%d burst_enabled=%t burst_after_s=%d load_cycle_enabled=%t high_load_hold_s=%d low_load_hold_s=%d max_inflight=%d endpoint=%s insecure=%t db=%s num_rows=%d payload_size=%d fixed_key=%d max_staleness_s=%d direct_access=%t gcp_fallback=%t bypass=%t dcp_enabled=%t dcp_initial=%d dcp_min=%d dcp_max=%d dcp_max_rpc=%.2f dcp_min_rpc=%.2f pprof_enabled=%t pprof_addr=%s otel_enabled=%t otel_service=%s otel_metric_prefix=%s otel_export_debug=%t",
 		cfg.probeType,
 		cfg.queryMode,
 		cfg.loadMode,
-		cfg.startQPS,
-		cfg.endQPS,
-		cfg.stepQPSPercent,
-		cfg.qpsStepInterval,
+		cfg.startLoad,
+		cfg.endLoad,
+		cfg.stepLoadPercent,
+		cfg.loadStepInterval,
 		cfg.burstEnabled,
 		cfg.burstAfterSeconds,
-		cfg.qpsCycleEnabled,
-		cfg.highQPSHoldSeconds,
-		cfg.lowQPSHoldSeconds,
+		cfg.loadCycleEnabled,
+		cfg.highLoadHoldSeconds,
+		cfg.lowLoadHoldSeconds,
 		cfg.maxInflight,
 		cfg.endpoint,
 		cfg.insecure,
 		cfg.databasePath,
 		cfg.numRows,
 		cfg.payloadSize,
+		cfg.fixedKey,
 		cfg.maxStalenessSeconds,
 		cfg.enableDirectAccess,
 		cfg.enableGcpFallback,
@@ -94,6 +95,8 @@ func printConfig(cfg config) {
 		cfg.pprofAddr,
 		cfg.enableOTEL,
 		cfg.otelServiceName,
+		cfg.otelMetricPrefix,
+		cfg.otelExportDebug,
 	)
 }
 

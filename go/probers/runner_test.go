@@ -32,35 +32,35 @@ func TestStepDownQPSClampsAtStart(t *testing.T) {
 }
 
 func TestRampCycleQPSSequence(t *testing.T) {
-	cfg := config{startQPS: 200, endQPS: 1000, stepQPSPercent: 50}
-	qps := cfg.startQPS
+	cfg := config{startLoad: 200, endLoad: 1000, stepLoadPercent: 50}
+	qps := cfg.startLoad
 
-	qps = stepUpQPS(qps, cfg.endQPS, cfg.stepQPSPercent)
+	qps = stepUpQPS(qps, cfg.endLoad, cfg.stepLoadPercent)
 	if qps != 300 {
 		t.Fatalf("first step up = %f, want 300", qps)
 	}
-	qps = stepUpQPS(qps, cfg.endQPS, cfg.stepQPSPercent)
+	qps = stepUpQPS(qps, cfg.endLoad, cfg.stepLoadPercent)
 	if qps != 450 {
 		t.Fatalf("second step up = %f, want 450", qps)
 	}
-	for qps < cfg.endQPS {
-		qps = stepUpQPS(qps, cfg.endQPS, cfg.stepQPSPercent)
+	for qps < cfg.endLoad {
+		qps = stepUpQPS(qps, cfg.endLoad, cfg.stepLoadPercent)
 	}
-	if qps != cfg.endQPS {
-		t.Fatalf("ramp cap = %f, want %f", qps, cfg.endQPS)
+	if qps != cfg.endLoad {
+		t.Fatalf("ramp cap = %f, want %f", qps, cfg.endLoad)
 	}
 
-	qps = stepDownQPS(qps, cfg.startQPS, cfg.stepQPSPercent)
+	qps = stepDownQPS(qps, cfg.startLoad, cfg.stepLoadPercent)
 	if qps != 500 {
 		t.Fatalf("first step down = %f, want 500", qps)
 	}
-	qps = stepDownQPS(qps, cfg.startQPS, cfg.stepQPSPercent)
+	qps = stepDownQPS(qps, cfg.startLoad, cfg.stepLoadPercent)
 	if qps != 250 {
 		t.Fatalf("second step down = %f, want 250", qps)
 	}
-	qps = stepDownQPS(qps, cfg.startQPS, cfg.stepQPSPercent)
-	if qps != cfg.startQPS {
-		t.Fatalf("step down floor = %f, want %f", qps, cfg.startQPS)
+	qps = stepDownQPS(qps, cfg.startLoad, cfg.stepLoadPercent)
+	if qps != cfg.startLoad {
+		t.Fatalf("step down floor = %f, want %f", qps, cfg.startLoad)
 	}
 }
 
@@ -86,12 +86,12 @@ func TestRunBurstCycleUsesCompressedTestQPSWindow(t *testing.T) {
 		},
 	}
 	cfg := validTestNoopConfig(true)
-	cfg.startQPS = 20
-	cfg.endQPS = 500
+	cfg.startLoad = 20
+	cfg.endLoad = 500
 	cfg.burstEnabled = true
 	cfg.burstAfterSeconds = 2
-	cfg.qpsCycleEnabled = true
-	cfg.highQPSHoldSeconds = 1
+	cfg.loadCycleEnabled = true
+	cfg.highLoadHoldSeconds = 1
 	cfg.maxInflight = 1000
 	cfg.logIntervalSeconds = 10
 
@@ -135,8 +135,8 @@ func TestRunConcurrencyModeStartsTargetWorkers(t *testing.T) {
 	}
 	cfg := validTestNoopConfig(true)
 	cfg.loadMode = loadModeConcurrency
-	cfg.startQPS = maxWorkers
-	cfg.endQPS = maxWorkers
+	cfg.startLoad = maxWorkers
+	cfg.endLoad = maxWorkers
 	cfg.maxInflight = maxWorkers
 	cfg.logIntervalSeconds = 10
 

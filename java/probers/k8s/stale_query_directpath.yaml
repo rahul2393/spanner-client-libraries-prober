@@ -40,16 +40,18 @@ spec:
           env:
             - name: PROBE_TYPE
               value: "stale_query"
+            - name: FIXED_KEY
+              value: "12345"
             - name: QPS
               value: "10"
             # DCP/load knobs. Uncomment when testing high concurrent streams.
-#            - name: START_QPS
+#            - name: START_LOAD
 #              value: "100"
-#            - name: END_QPS
+#            - name: END_LOAD
 #              value: "5000"
-#            - name: STEP_QPS_PERCENT
+#            - name: STEP_LOAD_PERCENT
 #              value: "25"
-#            - name: QPS_STEP_INTERVAL_SECONDS
+#            - name: LOAD_STEP_INTERVAL_SECONDS
 #              value: "60"
 #            - name: MAX_INFLIGHT
 #              value: "512"
@@ -57,6 +59,8 @@ spec:
 #              value: "true"
             - name: OTEL_SERVICE_NAME
               value: "irahul-stale-query-directpath"
+            - name: OTEL_TRACE_SAMPLING_FRACTION
+              value: "0"
             - name: GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS
               value: "true"
 #            - name: JAVA_TOOL_OPTIONS

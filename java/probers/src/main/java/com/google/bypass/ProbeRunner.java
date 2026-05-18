@@ -3,6 +3,7 @@ package com.google.bypass;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.SynchronousQueue;
@@ -10,6 +11,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.logging.Logger;
 
 final class ProbeRunner {
@@ -221,28 +223,54 @@ final class ProbeRunner {
     Thread dispatcher =
         new Thread(
             () -> {
+              long lastNanos = System.nanoTime();
+              double tokens = 0.0d;
+              long tickNanos = dispatchTickNanos(options);
               while (!Thread.currentThread().isInterrupted()) {
-                sleepForQps(targetQps.get(), options.timeUnit);
+                LockSupport.parkNanos(tickNanos);
                 if (Thread.currentThread().isInterrupted()) {
                   return;
                 }
-                if (!permits.tryAcquire()) {
-                  stats.recordDropped();
+                long now = System.nanoTime();
+                long elapsed = Math.max(0L, now - lastNanos);
+                lastNanos = now;
+                tokens += targetQps.get() * ((double) elapsed / options.timeUnit.toNanos());
+                tokens = Math.min(tokens, options.maxInflight);
+                int toDispatch = (int) tokens;
+                if (toDispatch == 0) {
                   continue;
                 }
-                executor.execute(
-                    () -> {
-                      try {
-                        runProbe(probe, invoker, stats);
-                      } finally {
-                        permits.release();
-                      }
-                    });
+                tokens -= toDispatch;
+                for (int i = 0; i < toDispatch; i++) {
+                  if (!permits.tryAcquire()) {
+                    stats.recordDropped();
+                    continue;
+                  }
+                  try {
+                    executor.execute(
+                        () -> {
+                          try {
+                            runProbe(probe, invoker, stats);
+                          } finally {
+                            permits.release();
+                          }
+                        });
+                  } catch (RejectedExecutionException e) {
+                    permits.release();
+                    if (!Thread.currentThread().isInterrupted()) {
+                      stats.recordDropped();
+                    }
+                  }
+                }
               }
             },
             "probe-dispatcher");
     dispatcher.start();
     return dispatcher;
+  }
+
+  private static long dispatchTickNanos(Options options) {
+    return Math.max(TimeUnit.MILLISECONDS.toNanos(1), options.timeUnit.toNanos() / 100L);
   }
 
   private static void runProbe(Probe probe, ProbeInvoker invoker, RunStats stats) {
@@ -399,15 +427,6 @@ final class ProbeRunner {
     double next = QpsController.stepUpQps(current, options.endQps, options.stepQpsPercent);
     targetQps.set(next);
     logger.info(String.format("step %s from %.2f to %.2f", loadUnit(options), current, next));
-  }
-
-  private static void sleepForQps(double qps, Duration unit) {
-    long sleepNanos = Math.max(1L, Math.round(unit.toNanos() / Math.max(0.001d, qps)));
-    try {
-      TimeUnit.NANOSECONDS.sleep(sleepNanos);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-    }
   }
 
   private static void logStats(

@@ -35,9 +35,9 @@ func newProbe(client *spanner.Client, cfg config) (probe, error) {
 	case "multi_blind_dml":
 		return &multiBlindDMLProbe{client: client, numRows: cfg.numRows, payloadSize: cfg.payloadSize, statements: 5}, nil
 	case "strong_query":
-		return &queryProbe{client: client, numRows: cfg.numRows, queryMode: cfg.queryMode}, nil
+		return &queryProbe{client: client, numRows: cfg.numRows, queryMode: cfg.queryMode, fixedKey: cfg.fixedKey}, nil
 	case "stale_query":
-		return &queryProbe{client: client, numRows: cfg.numRows, maxStalenessSeconds: cfg.maxStalenessSeconds, queryMode: cfg.queryMode}, nil
+		return &queryProbe{client: client, numRows: cfg.numRows, maxStalenessSeconds: cfg.maxStalenessSeconds, queryMode: cfg.queryMode, fixedKey: cfg.fixedKey}, nil
 	case "multi_use_ro_query":
 		return &multiUseReadOnlyQueryProbe{client: client, numRows: cfg.numRows, queryMode: cfg.queryMode}, nil
 	case "write":

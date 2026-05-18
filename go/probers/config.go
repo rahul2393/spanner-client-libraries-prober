@@ -9,27 +9,27 @@ import (
 )
 
 const (
-	defaultProject            = "span-cloud-testing"
-	defaultInstance           = "irahul-load-test"
-	defaultDatabase           = "db"
-	defaultProbeType          = "strong_read"
-	defaultQPS                = 4
-	defaultNumRows            = 10_000_000
-	defaultPayloadSize        = 1000
-	defaultMaxStalenessSecond = 60
-	defaultWarmupCycles       = 1000
-	defaultParallelism        = 8
-	defaultLogIntervalSeconds = 10
-	defaultQpsStepInterval    = 60
-	defaultBurstAfterSeconds  = 900
-	defaultHighQPSHoldSeconds = 300
-	defaultLowQPSHoldSeconds  = 300
-	defaultPprofAddr          = ":6060"
+	defaultProject             = "span-cloud-testing"
+	defaultInstance            = "irahul-load-test"
+	defaultDatabase            = "db"
+	defaultProbeType           = "strong_read"
+	defaultLoad                = 4
+	defaultNumRows             = 10_000_000
+	defaultPayloadSize         = 1000
+	defaultMaxStalenessSecond  = 60
+	defaultWarmupCycles        = 1000
+	defaultParallelism         = 8
+	defaultLogIntervalSeconds  = 10
+	defaultLoadStepInterval    = 60
+	defaultBurstAfterSeconds   = 900
+	defaultHighLoadHoldSeconds = 300
+	defaultLowLoadHoldSeconds  = 300
+	defaultPprofAddr           = ":6060"
 
 	defaultOTELServiceName                = "irahul-gloadtest"
 	defaultOTELProjectID                  = "span-cloud-testing"
 	defaultOTELMetricPrefix               = "custom.googleapis.com/irahul"
-	defaultOTELTraceSamplingFraction      = 1.0
+	defaultOTELTraceSamplingFraction      = 0.0
 	defaultOTELMetricExportIntervalSecond = 10
 
 	tableName = "T"
@@ -54,17 +54,18 @@ type config struct {
 	probeType           string
 	queryMode           string
 	loadMode            loadMode
-	startQPS            float64
-	endQPS              float64
-	stepQPSPercent      float64
-	qpsStepInterval     int
+	startLoad           float64
+	endLoad             float64
+	stepLoadPercent     float64
+	loadStepInterval    int
 	burstEnabled        bool
 	burstAfterSeconds   int
-	qpsCycleEnabled     bool
-	highQPSHoldSeconds  int
-	lowQPSHoldSeconds   int
+	loadCycleEnabled    bool
+	highLoadHoldSeconds int
+	lowLoadHoldSeconds  int
 	numRows             int64
 	payloadSize         int
+	fixedKey            int64
 	maxStalenessSeconds int64
 	warmupCycles        int
 	maxInflight         int
@@ -85,6 +86,7 @@ type config struct {
 	otelProjectID                  string
 	otelServiceName                string
 	otelMetricPrefix               string
+	otelExportDebug                bool
 	otelTraceSamplingFraction      float64
 	otelMetricExportIntervalSecond int
 	cloudTraceEndpoint             string
@@ -103,17 +105,18 @@ func loadConfig() (config, error) {
 		probeType:           strings.ToLower(getEnv("PROBE_TYPE", defaultProbeType)),
 		queryMode:           strings.ToLower(getEnv("QUERY_MODE", "normal")),
 		loadMode:            loadMode(strings.ToLower(strings.ReplaceAll(getEnv("LOAD_MODE", string(loadModeQPS)), "-", "_"))),
-		startQPS:            getEnvFloat64Any([]string{"START_QPS", "QPS"}, defaultQPS),
-		endQPS:              getEnvFloat64("END_QPS", 0),
-		stepQPSPercent:      getEnvFloat64Any([]string{"STEP_QPS_PERCENT", "STEP_QPS"}, 0),
-		qpsStepInterval:     getEnvIntAny([]string{"QPS_STEP_INTERVAL_SECONDS", "INTERVAL_SECONDS"}, defaultQpsStepInterval),
+		startLoad:           getEnvFloat64Any([]string{"START_LOAD", "LOAD", "START_QPS", "QPS"}, defaultLoad),
+		endLoad:             getEnvFloat64Any([]string{"END_LOAD", "END_QPS"}, 0),
+		stepLoadPercent:     getEnvFloat64Any([]string{"STEP_LOAD_PERCENT", "STEP_QPS_PERCENT", "STEP_QPS"}, 0),
+		loadStepInterval:    getEnvIntAny([]string{"LOAD_STEP_INTERVAL_SECONDS", "QPS_STEP_INTERVAL_SECONDS", "INTERVAL_SECONDS"}, defaultLoadStepInterval),
 		burstEnabled:        getEnvBoolAny([]string{"BURST_ENABLED", "BURST_MODE"}, false),
 		burstAfterSeconds:   getEnvInt("BURST_AFTER_SECONDS", defaultBurstAfterSeconds),
-		qpsCycleEnabled:     getEnvBoolAny([]string{"QPS_CYCLE_ENABLED", "CYCLE_ENABLED"}, false),
-		highQPSHoldSeconds:  getEnvInt("HIGH_QPS_HOLD_SECONDS", defaultHighQPSHoldSeconds),
-		lowQPSHoldSeconds:   getEnvInt("LOW_QPS_HOLD_SECONDS", defaultLowQPSHoldSeconds),
+		loadCycleEnabled:    getEnvBoolAny([]string{"LOAD_CYCLE_ENABLED", "QPS_CYCLE_ENABLED", "CYCLE_ENABLED"}, false),
+		highLoadHoldSeconds: getEnvIntAny([]string{"HIGH_LOAD_HOLD_SECONDS", "HIGH_QPS_HOLD_SECONDS"}, defaultHighLoadHoldSeconds),
+		lowLoadHoldSeconds:  getEnvIntAny([]string{"LOW_LOAD_HOLD_SECONDS", "LOW_QPS_HOLD_SECONDS"}, defaultLowLoadHoldSeconds),
 		numRows:             getEnvInt64("NUM_ROWS", defaultNumRows),
 		payloadSize:         getEnvInt("PAYLOAD_SIZE", defaultPayloadSize),
+		fixedKey:            getEnvInt64("FIXED_KEY", -1),
 		maxStalenessSeconds: getEnvInt64("MAX_STALENESS_SECONDS", defaultMaxStalenessSecond),
 		warmupCycles:        getEnvInt("WARMUP_CYCLES", defaultWarmupCycles),
 		maxInflight:         getEnvIntAny([]string{"MAX_INFLIGHT", "PARALLELISM"}, defaultParallelism),
@@ -134,6 +137,7 @@ func loadConfig() (config, error) {
 		otelProjectID:                  getEnv("OTEL_PROJECT_ID", defaultOTELProjectID),
 		otelServiceName:                getEnv("OTEL_SERVICE_NAME", defaultOTELServiceName),
 		otelMetricPrefix:               getEnv("OTEL_METRIC_PREFIX", defaultOTELMetricPrefix),
+		otelExportDebug:                getEnvBool("OTEL_EXPORT_DEBUG", false),
 		otelTraceSamplingFraction:      getEnvFloat64("OTEL_TRACE_SAMPLING_FRACTION", defaultOTELTraceSamplingFraction),
 		otelMetricExportIntervalSecond: getEnvInt("OTEL_METRIC_EXPORT_INTERVAL_SECONDS", defaultOTELMetricExportIntervalSecond),
 		cloudTraceEndpoint:             normalizeEndpoint(strings.TrimSpace(os.Getenv("CLOUD_TRACE_ENDPOINT"))),
@@ -156,38 +160,40 @@ func validateConfig(cfg config) (config, error) {
 	switch {
 	case cfg.loadMode != loadModeQPS && cfg.loadMode != loadModeConcurrency:
 		return cfg, fmt.Errorf("LOAD_MODE must be one of [qps, concurrency], got %q", cfg.loadMode)
-	case cfg.startQPS <= 0:
-		return cfg, fmt.Errorf("START_QPS/QPS must be > 0, got %f", cfg.startQPS)
-	case cfg.endQPS < 0:
-		return cfg, fmt.Errorf("END_QPS must be >= 0, got %f", cfg.endQPS)
-	case cfg.stepQPSPercent < 0:
-		return cfg, fmt.Errorf("STEP_QPS_PERCENT/STEP_QPS must be >= 0, got %f", cfg.stepQPSPercent)
-	case cfg.qpsStepInterval <= 0:
-		return cfg, fmt.Errorf("QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0, got %d", cfg.qpsStepInterval)
+	case cfg.startLoad <= 0:
+		return cfg, fmt.Errorf("START_LOAD/START_QPS/QPS must be > 0, got %f", cfg.startLoad)
+	case cfg.endLoad < 0:
+		return cfg, fmt.Errorf("END_LOAD/END_QPS must be >= 0, got %f", cfg.endLoad)
+	case cfg.stepLoadPercent < 0:
+		return cfg, fmt.Errorf("STEP_LOAD_PERCENT/STEP_QPS_PERCENT/STEP_QPS must be >= 0, got %f", cfg.stepLoadPercent)
+	case cfg.loadStepInterval <= 0:
+		return cfg, fmt.Errorf("LOAD_STEP_INTERVAL_SECONDS/QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0, got %d", cfg.loadStepInterval)
 	case cfg.burstAfterSeconds < 0:
 		return cfg, fmt.Errorf("BURST_AFTER_SECONDS must be >= 0, got %d", cfg.burstAfterSeconds)
-	case cfg.highQPSHoldSeconds < 0:
-		return cfg, fmt.Errorf("HIGH_QPS_HOLD_SECONDS must be >= 0, got %d", cfg.highQPSHoldSeconds)
-	case cfg.lowQPSHoldSeconds < 0:
-		return cfg, fmt.Errorf("LOW_QPS_HOLD_SECONDS must be >= 0, got %d", cfg.lowQPSHoldSeconds)
-	case cfg.qpsCycleEnabled && cfg.endQPS <= cfg.startQPS:
-		return cfg, fmt.Errorf("END_QPS must be greater than START_QPS/QPS when QPS_CYCLE_ENABLED=true, got start=%f end=%f", cfg.startQPS, cfg.endQPS)
-	case cfg.qpsCycleEnabled && cfg.burstEnabled && cfg.highQPSHoldSeconds <= 0:
-		return cfg, fmt.Errorf("HIGH_QPS_HOLD_SECONDS must be > 0 for burst QPS_CYCLE_ENABLED=true")
-	case cfg.qpsCycleEnabled && !cfg.burstEnabled && cfg.lowQPSHoldSeconds <= 0:
-		return cfg, fmt.Errorf("LOW_QPS_HOLD_SECONDS must be > 0 for non-burst QPS_CYCLE_ENABLED=true")
-	case cfg.qpsCycleEnabled && !cfg.burstEnabled && cfg.stepQPSPercent <= 0:
-		return cfg, fmt.Errorf("STEP_QPS_PERCENT/STEP_QPS must be > 0 for non-burst QPS_CYCLE_ENABLED=true")
+	case cfg.highLoadHoldSeconds < 0:
+		return cfg, fmt.Errorf("HIGH_LOAD_HOLD_SECONDS/HIGH_QPS_HOLD_SECONDS must be >= 0, got %d", cfg.highLoadHoldSeconds)
+	case cfg.lowLoadHoldSeconds < 0:
+		return cfg, fmt.Errorf("LOW_LOAD_HOLD_SECONDS/LOW_QPS_HOLD_SECONDS must be >= 0, got %d", cfg.lowLoadHoldSeconds)
+	case cfg.loadCycleEnabled && cfg.endLoad <= cfg.startLoad:
+		return cfg, fmt.Errorf("END_LOAD must be greater than START_LOAD when LOAD_CYCLE_ENABLED=true, got start=%f end=%f", cfg.startLoad, cfg.endLoad)
+	case cfg.loadCycleEnabled && cfg.burstEnabled && cfg.highLoadHoldSeconds <= 0:
+		return cfg, fmt.Errorf("HIGH_LOAD_HOLD_SECONDS must be > 0 for burst LOAD_CYCLE_ENABLED=true")
+	case cfg.loadCycleEnabled && !cfg.burstEnabled && cfg.lowLoadHoldSeconds <= 0:
+		return cfg, fmt.Errorf("LOW_LOAD_HOLD_SECONDS must be > 0 for non-burst LOAD_CYCLE_ENABLED=true")
+	case cfg.loadCycleEnabled && !cfg.burstEnabled && cfg.stepLoadPercent <= 0:
+		return cfg, fmt.Errorf("STEP_LOAD_PERCENT must be > 0 for non-burst LOAD_CYCLE_ENABLED=true")
 	case cfg.numRows <= 0:
 		return cfg, fmt.Errorf("NUM_ROWS must be > 0, got %d", cfg.numRows)
 	case cfg.payloadSize <= 0:
 		return cfg, fmt.Errorf("PAYLOAD_SIZE must be > 0, got %d", cfg.payloadSize)
+	case cfg.fixedKey >= cfg.numRows:
+		return cfg, fmt.Errorf("FIXED_KEY must be less than NUM_ROWS, got fixed_key=%d num_rows=%d", cfg.fixedKey, cfg.numRows)
 	case cfg.maxInflight <= 0:
 		return cfg, fmt.Errorf("MAX_INFLIGHT/PARALLELISM must be > 0, got %d", cfg.maxInflight)
-	case cfg.loadMode == loadModeConcurrency && cfg.startQPS > float64(cfg.maxInflight):
-		return cfg, fmt.Errorf("START_QPS/QPS worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency, got start=%f max_inflight=%d", cfg.startQPS, cfg.maxInflight)
-	case cfg.loadMode == loadModeConcurrency && cfg.endQPS > float64(cfg.maxInflight):
-		return cfg, fmt.Errorf("END_QPS worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency, got end=%f max_inflight=%d", cfg.endQPS, cfg.maxInflight)
+	case cfg.loadMode == loadModeConcurrency && cfg.startLoad > float64(cfg.maxInflight):
+		return cfg, fmt.Errorf("START_LOAD worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency, got start=%f max_inflight=%d", cfg.startLoad, cfg.maxInflight)
+	case cfg.loadMode == loadModeConcurrency && cfg.endLoad > float64(cfg.maxInflight):
+		return cfg, fmt.Errorf("END_LOAD worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency, got end=%f max_inflight=%d", cfg.endLoad, cfg.maxInflight)
 	case cfg.maxStalenessSeconds <= 0:
 		return cfg, fmt.Errorf("MAX_STALENESS_SECONDS must be > 0, got %d", cfg.maxStalenessSeconds)
 	case cfg.warmupCycles < 0:

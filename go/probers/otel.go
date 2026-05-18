@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -55,6 +56,10 @@ var defaultLatencyMsBuckets = []float64{
 }
 
 func initializeOpenTelemetry(ctx context.Context, cfg config) (*otelRuntime, error) {
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		log.Printf("otel_error err=%v", err)
+	}))
+
 	host, err := os.Hostname()
 	if err != nil || host == "" {
 		host = "unknown"
@@ -95,20 +100,23 @@ func initializeOpenTelemetry(ctx context.Context, cfg config) (*otelRuntime, err
 		resourceTaskID,
 	)
 
-	traceOpts := []gcptrace.Option{gcptrace.WithProjectID(cfg.otelProjectID)}
-	if cfg.cloudTraceEndpoint != "" {
-		traceOpts = append(traceOpts, gcptrace.WithTraceClientOptions([]option.ClientOption{option.WithEndpoint(cfg.cloudTraceEndpoint)}))
+	var traceProvider *trace.TracerProvider
+	if cfg.otelTraceSamplingFraction > 0 {
+		traceOpts := []gcptrace.Option{gcptrace.WithProjectID(cfg.otelProjectID)}
+		if cfg.cloudTraceEndpoint != "" {
+			traceOpts = append(traceOpts, gcptrace.WithTraceClientOptions([]option.ClientOption{option.WithEndpoint(cfg.cloudTraceEndpoint)}))
+		}
+		traceExp, err := gcptrace.New(traceOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("create cloud trace exporter: %w", err)
+		}
+		traceProvider = trace.NewTracerProvider(
+			trace.WithSampler(trace.TraceIDRatioBased(cfg.otelTraceSamplingFraction)),
+			trace.WithBatcher(traceExp),
+			trace.WithResource(res),
+		)
+		otel.SetTracerProvider(traceProvider)
 	}
-	traceExp, err := gcptrace.New(traceOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("create cloud trace exporter: %w", err)
-	}
-	traceProvider := trace.NewTracerProvider(
-		trace.WithSampler(trace.TraceIDRatioBased(cfg.otelTraceSamplingFraction)),
-		trace.WithBatcher(traceExp),
-		trace.WithResource(res),
-	)
-	otel.SetTracerProvider(traceProvider)
 
 	metricOpts := []gcpmetric.Option{
 		gcpmetric.WithProjectID(cfg.otelProjectID),
@@ -126,8 +134,12 @@ func initializeOpenTelemetry(ctx context.Context, cfg config) (*otelRuntime, err
 	if err != nil {
 		return nil, fmt.Errorf("create cloud monitoring exporter: %w", err)
 	}
+	metricExporter := &loggingMetricExporter{
+		Exporter: metricExp,
+		debug:    cfg.otelExportDebug,
+	}
 	metricReader := metric.NewPeriodicReader(
-		metricExp,
+		metricExporter,
 		metric.WithInterval(time.Duration(cfg.otelMetricExportIntervalSecond)*time.Second),
 	)
 	meterProvider := metric.NewMeterProvider(
@@ -158,20 +170,89 @@ func initializeOpenTelemetry(ctx context.Context, cfg config) (*otelRuntime, err
 		return nil, err
 	}
 
+	var tracer oteltrace.Tracer
+	if traceProvider != nil {
+		tracer = otel.Tracer("gloadtest")
+	}
 	return &otelRuntime{
 		shutdown: func(shutdownCtx context.Context) error {
+			if traceProvider == nil {
+				return meterProvider.Shutdown(shutdownCtx)
+			}
 			return errors.Join(
 				meterProvider.Shutdown(shutdownCtx),
 				traceProvider.Shutdown(shutdownCtx),
 			)
 		},
 		meterProvider:    meterProvider,
-		tracer:           otel.Tracer("gloadtest"),
+		tracer:           tracer,
 		requestCounter:   requestCounter,
 		latencyHistogram: latencyHistogram,
 		host:             host,
 		bypassEnabled:    cfg.enableBypass,
 	}, nil
+}
+
+type loggingMetricExporter struct {
+	metric.Exporter
+	debug bool
+}
+
+func (e *loggingMetricExporter) Export(ctx context.Context, rm *otelmetricdata.ResourceMetrics) error {
+	names := metricNames(rm)
+	if e.debug {
+		log.Printf("otel_metric_export_start metric_count=%d metrics=%s", len(names), strings.Join(names, ","))
+	}
+	err := e.Exporter.Export(ctx, rm)
+	if err != nil {
+		log.Printf("otel_metric_export_error metric_count=%d metrics=%s err=%v", len(names), strings.Join(names, ","), err)
+		return err
+	}
+	if e.debug {
+		log.Printf("otel_metric_export_ok metric_count=%d metrics=%s", len(names), strings.Join(names, ","))
+	}
+	return nil
+}
+
+func (e *loggingMetricExporter) ForceFlush(ctx context.Context) error {
+	err := e.Exporter.ForceFlush(ctx)
+	if err != nil {
+		log.Printf("otel_metric_force_flush_error err=%v", err)
+		return err
+	}
+	if e.debug {
+		log.Printf("otel_metric_force_flush_ok")
+	}
+	return nil
+}
+
+func (e *loggingMetricExporter) Shutdown(ctx context.Context) error {
+	err := e.Exporter.Shutdown(ctx)
+	if err != nil {
+		log.Printf("otel_metric_shutdown_error err=%v", err)
+		return err
+	}
+	if e.debug {
+		log.Printf("otel_metric_shutdown_ok")
+	}
+	return nil
+}
+
+func metricNames(rm *otelmetricdata.ResourceMetrics) []string {
+	if rm == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var names []string
+	for _, scope := range rm.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if !seen[m.Name] {
+				seen[m.Name] = true
+				names = append(names, m.Name)
+			}
+		}
+	}
+	return names
 }
 
 func (o *otelRuntime) observeProbe(ctx context.Context, probeName string, latency time.Duration) {

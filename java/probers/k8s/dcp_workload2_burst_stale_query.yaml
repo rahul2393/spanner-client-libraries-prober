@@ -41,11 +41,13 @@ spec:
           env:
             - name: PROBE_TYPE
               value: "stale_query"
+            - name: FIXED_KEY
+              value: "12345"
             - name: LOAD_MODE
               value: "concurrency"
-            - name: START_QPS
+            - name: START_LOAD
               value: "50"
-            - name: END_QPS
+            - name: END_LOAD
               value: "600"
             - name: BURST_ENABLED
               value: "true"
@@ -59,6 +61,8 @@ spec:
               value: "true"
             - name: OTEL_SERVICE_NAME
               value: "irahul-java-dcp-workload2-burst"
+            - name: OTEL_TRACE_SAMPLING_FRACTION
+              value: "0"
 #            - name: GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS
 #              value: "true"
 #            - name: ENABLE_DEBUG_LOGGING

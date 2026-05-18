@@ -14,7 +14,8 @@ final class ProbeFactory {
       String ycsbTable,
       String ycsbKey,
       String ycsbUserId,
-      int ycsbZeroPadding) {
+      int ycsbZeroPadding,
+      int fixedKey) {
     return switch (workload) {
       case "test_noop" -> new TestNoopProbe();
       case "stale_read" -> new StaleReadProbe(client, numRows, 15);
@@ -28,8 +29,8 @@ final class ProbeFactory {
       case "blind_dml" -> new BlindDmlProbe(client, numRows, payloadSize);
       case "multi_blind_dml" ->
           new MultiBlindDmlProbe(client, numRows, payloadSize, /* numDmlStatements= */ 5);
-      case "strong_query" -> new QueryProbe(client, numRows);
-      case "stale_query" -> new QueryProbe(client, numRows, maxStalenessSeconds);
+      case "strong_query" -> new QueryProbe(client, numRows, 0, fixedKey);
+      case "stale_query" -> new QueryProbe(client, numRows, maxStalenessSeconds, fixedKey);
       case "multi_use_ro_query" -> new MultiUseReadOnlyQueryProbe(client, numRows);
       case "ycsb_fixed_read" ->
           new YcsbFixedReadProbe(client, ycsbTable, ycsbKey, ycsbUserId, ycsbZeroPadding);

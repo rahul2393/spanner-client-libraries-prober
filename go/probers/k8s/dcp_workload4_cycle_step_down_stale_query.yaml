@@ -16,7 +16,7 @@ spec:
       containers:
         - name: workload4-cycle-step-down
           # Build with: ./go/probers/scripts/build-images.sh source <dcp-branch> --push
-          image: us-central1-docker.pkg.dev/span-cloud-testing/irahul-images/irahul-go-client:dcp
+          image: us-central1-docker.pkg.dev/span-cloud-testing/irahul-images/irahul-go-client:support-dynamic-channel-pooling
           imagePullPolicy: Always
           ports:
             - name: pprof
@@ -40,22 +40,24 @@ spec:
                   fieldPath: metadata.namespace
             - name: PROBE_TYPE
               value: "stale_query"
+            - name: FIXED_KEY
+              value: "12345"
             - name: LOAD_MODE
               value: "concurrency"
-            - name: START_QPS
+            - name: START_LOAD
+              value: "1"
+            - name: END_LOAD
+              value: "200"
+            - name: STEP_LOAD_PERCENT
               value: "50"
-            - name: END_QPS
-              value: "600"
-            - name: STEP_QPS_PERCENT
-              value: "50"
-            - name: QPS_STEP_INTERVAL_SECONDS
-              value: "180"
-            - name: QPS_CYCLE_ENABLED
+            - name: LOAD_STEP_INTERVAL_SECONDS
+              value: "30"
+            - name: LOAD_CYCLE_ENABLED
               value: "true"
-            - name: LOW_QPS_HOLD_SECONDS
-              value: "600"
+            - name: LOW_LOAD_HOLD_SECONDS
+              value: "300"
             - name: MAX_INFLIGHT
-              value: "600"
+              value: "300"
             - name: SPANNER_DCP_ENABLED
               value: "true"
             - name: SPANNER_DCP_INITIAL_CHANNELS
@@ -65,21 +67,25 @@ spec:
             - name: SPANNER_DCP_MAX_CHANNELS
               value: "200"
             - name: SPANNER_DCP_MAX_RPC_PER_CHANNEL
-              value: "50"
+              value: "10"
             - name: SPANNER_DCP_MIN_RPC_PER_CHANNEL
-              value: "5"
+              value: "2"
             - name: SPANNER_DCP_DEBUG_LOGS
               value: "true"
             - name: OTEL_ENABLED
-              value: "true"
+              value: "false"
             - name: OTEL_PROJECT_ID
               value: "span-cloud-testing"
             - name: OTEL_SERVICE_NAME
               value: "irahul-go-dcp-workload4-cycle"
+            - name: OTEL_TRACE_SAMPLING_FRACTION
+              value: "0"
             - name: OTEL_METRIC_PREFIX
               value: "custom.googleapis.com/irahul"
             - name: OTEL_METRIC_EXPORT_INTERVAL_SECONDS
               value: "10"
+            - name: OTEL_EXPORT_DEBUG
+              value: "true"
             - name: OTEL_RESOURCE_LOCATION
               value: "global"
             # DCP custom metric types emitted by this workload:
@@ -95,7 +101,11 @@ spec:
 #              value: "true"
 #            - name: GOOGLE_SPANNER_ENABLE_GCP_FALLBACK
 #              value: "true"
-#            - name: PPROF_ENABLED
-#              value: "true"
-#            - name: PPROF_ADDR
-#              value: ":6060"
+            - name: PPROF_ENABLED
+              value: "true"
+            - name: PPROF_ADDR
+              value: ":6060"
+            - name: PPROF_MUTEX_PROFILE_FRACTION
+              value: "5"
+            - name: PPROF_BLOCK_PROFILE_RATE
+              value: "1000000"

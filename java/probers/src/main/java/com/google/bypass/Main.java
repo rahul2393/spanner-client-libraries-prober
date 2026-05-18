@@ -25,6 +25,7 @@ import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
@@ -46,19 +47,19 @@ final class Main {
   private static final int DEFAULT_WARMUP_CYCLES = 1000;
 
   // Configuration via environment variables with defaults
-  private static double startQps = envDoubleAny(new String[] {"START_QPS", "QPS"}, 4.0);
-  private static double endQps = envDouble("END_QPS", 0.0);
+  private static double startQps = envDoubleAny(new String[] {"START_LOAD", "LOAD", "START_QPS", "QPS"}, 4.0);
+  private static double endQps = envDoubleAny(new String[] {"END_LOAD", "END_QPS"}, 0.0);
   private static double stepQpsPercent =
-      envDoubleAny(new String[] {"STEP_QPS_PERCENT", "STEP_QPS"}, 0.0);
+      envDoubleAny(new String[] {"STEP_LOAD_PERCENT", "STEP_QPS_PERCENT", "STEP_QPS"}, 0.0);
   private static int qpsStepIntervalSeconds =
-      envIntAny(new String[] {"QPS_STEP_INTERVAL_SECONDS", "INTERVAL_SECONDS"}, 60);
+      envIntAny(new String[] {"LOAD_STEP_INTERVAL_SECONDS", "QPS_STEP_INTERVAL_SECONDS", "INTERVAL_SECONDS"}, 60);
   private static boolean burstEnabled =
       envBoolAny(new String[] {"BURST_ENABLED", "BURST_MODE"}, false);
   private static int burstAfterSeconds = envInt("BURST_AFTER_SECONDS", 900);
   private static boolean qpsCycleEnabled =
-      envBoolAny(new String[] {"QPS_CYCLE_ENABLED", "CYCLE_ENABLED"}, false);
-  private static int highQpsHoldSeconds = envInt("HIGH_QPS_HOLD_SECONDS", 300);
-  private static int lowQpsHoldSeconds = envInt("LOW_QPS_HOLD_SECONDS", 300);
+      envBoolAny(new String[] {"LOAD_CYCLE_ENABLED", "QPS_CYCLE_ENABLED", "CYCLE_ENABLED"}, false);
+  private static int highQpsHoldSeconds = envIntAny(new String[] {"HIGH_LOAD_HOLD_SECONDS", "HIGH_QPS_HOLD_SECONDS"}, 300);
+  private static int lowQpsHoldSeconds = envIntAny(new String[] {"LOW_LOAD_HOLD_SECONDS", "LOW_QPS_HOLD_SECONDS"}, 300);
   private static int maxInflight = envIntAny(new String[] {"MAX_INFLIGHT", "PARALLELISM"}, 64);
   private static ProbeRunner.LoadMode loadMode =
       ProbeRunner.LoadMode.parse(envStr("LOAD_MODE", "qps"));
@@ -90,8 +91,11 @@ final class Main {
   private static String spannerDatabaseId = envNonBlankStr("SPANNER_DATABASE_ID", "db");
   private static int numRows = envInt("NUM_ROWS", 10000000);
   private static int payloadSize = envInt("PAYLOAD_SIZE", 1000);
+  private static int fixedKey = envInt("FIXED_KEY", -1);
   private static long maxStalenessSeconds = envLong("MAX_STALENESS_SECONDS", 60);
   private static String serviceName = envStr("OTEL_SERVICE_NAME", "irahul-jloadtest");
+  private static double otelTraceSamplingFraction =
+      envDouble("OTEL_TRACE_SAMPLING_FRACTION", 0.0);
   private static String ycsbTable = envNonBlankStr("YCSB_TABLE", "usertable");
   private static String ycsbUserId = envNonBlankStr("YCSB_USER_ID", "811092608265");
   private static String ycsbKey = envStr("YCSB_KEY", "");
@@ -152,19 +156,19 @@ final class Main {
     configureLogging();
     if (loadMode == ProbeRunner.LoadMode.QPS) {
       if (startQps <= 0) {
-        throw new IllegalArgumentException("START_QPS/QPS must be > 0. Current value: " + startQps);
+        throw new IllegalArgumentException("START_LOAD/START_QPS/QPS must be > 0. Current value: " + startQps);
       }
       if (endQps < 0) {
-        throw new IllegalArgumentException("END_QPS must be >= 0. Current value: " + endQps);
+        throw new IllegalArgumentException("END_LOAD/END_QPS must be >= 0. Current value: " + endQps);
       }
       if (stepQpsPercent < 0) {
         throw new IllegalArgumentException(
-            "STEP_QPS_PERCENT/STEP_QPS must be >= 0. Current value: "
+            "STEP_LOAD_PERCENT/STEP_QPS_PERCENT/STEP_QPS must be >= 0. Current value: "
                 + stepQpsPercent);
       }
       if (qpsStepIntervalSeconds <= 0) {
         throw new IllegalArgumentException(
-            "QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0. Current value: "
+            "LOAD_STEP_INTERVAL_SECONDS/QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0. Current value: "
                 + qpsStepIntervalSeconds);
       }
       QpsController.validateKnobs(
@@ -179,38 +183,42 @@ final class Main {
     } else {
       if (startQps <= 0) {
         throw new IllegalArgumentException(
-            "START_QPS/QPS must be > 0 because it is the starting worker count in LOAD_MODE=concurrency. Current value: "
+            "START_LOAD/START_QPS/QPS must be > 0 because it is the starting worker count in LOAD_MODE=concurrency. Current value: "
                 + startQps);
       }
       if (endQps < 0) {
         throw new IllegalArgumentException(
-            "END_QPS must be >= 0 because it is the ending worker count in LOAD_MODE=concurrency. Current value: "
+            "END_LOAD/END_QPS must be >= 0 because it is the ending worker count in LOAD_MODE=concurrency. Current value: "
                 + endQps);
       }
       if (stepQpsPercent < 0) {
         throw new IllegalArgumentException(
-            "STEP_QPS_PERCENT/STEP_QPS must be >= 0. Current value: " + stepQpsPercent);
+            "STEP_LOAD_PERCENT/STEP_QPS_PERCENT/STEP_QPS must be >= 0. Current value: " + stepQpsPercent);
       }
       if (qpsStepIntervalSeconds <= 0) {
         throw new IllegalArgumentException(
-            "QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0. Current value: "
+            "LOAD_STEP_INTERVAL_SECONDS/QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0. Current value: "
                 + qpsStepIntervalSeconds);
       }
     }
     if (maxInflight <= 0) {
       throw new IllegalArgumentException("MAX_INFLIGHT must be > 0. Current value: " + maxInflight);
     }
+    if (fixedKey >= numRows) {
+      throw new IllegalArgumentException(
+          "FIXED_KEY must be less than NUM_ROWS. fixed_key=" + fixedKey + " num_rows=" + numRows);
+    }
     if (loadMode == ProbeRunner.LoadMode.CONCURRENCY) {
       if (startQps > maxInflight) {
         throw new IllegalArgumentException(
-            "START_QPS/QPS worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency. start="
+            "START_LOAD worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency. start="
                 + startQps
                 + " max_inflight="
                 + maxInflight);
       }
       if (endQps > maxInflight) {
         throw new IllegalArgumentException(
-            "END_QPS worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency. end="
+            "END_LOAD worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency. end="
                 + endQps
                 + " max_inflight="
                 + maxInflight);
@@ -237,13 +245,13 @@ final class Main {
         loadMode == ProbeRunner.LoadMode.CONCURRENCY
             ? "End workers: " + (endQps > 0 ? endQps : "<max-inflight cap>")
             : "End QPS: " + (endQps > 0 ? endQps : "<unlimited>"));
-    System.out.println("Step QPS percent: " + stepQpsPercent);
-    System.out.println("QPS step interval seconds: " + qpsStepIntervalSeconds);
+    System.out.println("Step load percent: " + stepQpsPercent);
+    System.out.println("Load step interval seconds: " + qpsStepIntervalSeconds);
     System.out.println("Burst enabled: " + burstEnabled);
     System.out.println("Burst after seconds: " + burstAfterSeconds);
-    System.out.println("QPS cycle enabled: " + qpsCycleEnabled);
-    System.out.println("High QPS hold seconds: " + highQpsHoldSeconds);
-    System.out.println("Low QPS hold seconds: " + lowQpsHoldSeconds);
+    System.out.println("Load cycle enabled: " + qpsCycleEnabled);
+    System.out.println("High load hold seconds: " + highQpsHoldSeconds);
+    System.out.println("Low load hold seconds: " + lowQpsHoldSeconds);
     System.out.println("Load mode: " + loadMode.name().toLowerCase());
     System.out.println("Max in-flight: " + maxInflight);
     System.out.println("Log interval seconds: " + logIntervalSeconds);
@@ -264,6 +272,7 @@ final class Main {
     System.out.println("Spanner instance: " + spannerInstanceId);
     System.out.println("Spanner database: " + spannerDatabaseId);
     System.out.println("Num rows: " + numRows);
+    System.out.println("Fixed key: " + (fixedKey >= 0 ? fixedKey : "<disabled>"));
     System.out.println("Max staleness (s): " + maxStalenessSeconds);
     System.out.println("YCSB table: " + ycsbTable);
     System.out.println("YCSB user id: " + ycsbUserId);
@@ -336,7 +345,8 @@ final class Main {
         ycsbTable,
         ycsbKey,
         ycsbUserId,
-        ycsbZeroPadding);
+        ycsbZeroPadding,
+        fixedKey);
   }
 
   private static void configureLogging() throws IOException {
@@ -454,17 +464,18 @@ final class Main {
                     .build())
             .build();
 
-    // Trace exporter for bypass routing spans
-    TraceConfiguration traceConfig =
-        TraceConfiguration.builder().setProjectId(telemetryProjectId).build();
-    SpanExporter traceExporter = TraceExporter.createWithConfiguration(traceConfig);
-
-    SdkTracerProvider sdkTracerProvider =
+    SdkTracerProviderBuilder tracerProviderBuilder =
         SdkTracerProvider.builder()
             .setResource(resource)
-            .setSampler(Sampler.alwaysOn())
-            .addSpanProcessor(BatchSpanProcessor.builder(traceExporter).build())
-            .build();
+            .setSampler(Sampler.traceIdRatioBased(otelTraceSamplingFraction));
+    if (otelTraceSamplingFraction > 0.0) {
+      // Trace exporter for bypass routing spans. Disabled by default to keep probe hot path clean.
+      TraceConfiguration traceConfig =
+          TraceConfiguration.builder().setProjectId(telemetryProjectId).build();
+      SpanExporter traceExporter = TraceExporter.createWithConfiguration(traceConfig);
+      tracerProviderBuilder.addSpanProcessor(BatchSpanProcessor.builder(traceExporter).build());
+    }
+    SdkTracerProvider sdkTracerProvider = tracerProviderBuilder.build();
 
     OpenTelemetrySdk openTelemetrySdk =
         OpenTelemetrySdk.builder()

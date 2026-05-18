@@ -76,7 +76,7 @@ final class QpsControllerTest {
                     true,
                     0,
                     1));
-    assertTrue(err.getMessage().contains("END_QPS must be greater"));
+    assertTrue(err.getMessage().contains("END_LOAD must be greater"));
   }
 
   @Test
@@ -94,7 +94,7 @@ final class QpsControllerTest {
                     true,
                     0,
                     1));
-    assertTrue(err.getMessage().contains("STEP_QPS_PERCENT"));
+    assertTrue(err.getMessage().contains("STEP_LOAD_PERCENT"));
   }
 
   @Test
@@ -112,7 +112,7 @@ final class QpsControllerTest {
                     true,
                     -1,
                     0));
-    assertTrue(highHoldErr.getMessage().contains("HIGH_QPS_HOLD_SECONDS"));
+    assertTrue(highHoldErr.getMessage().contains("HIGH_LOAD_HOLD_SECONDS"));
 
     IllegalArgumentException lowHoldErr =
         assertThrows(
@@ -127,7 +127,7 @@ final class QpsControllerTest {
                     true,
                     0,
                     -1));
-    assertTrue(lowHoldErr.getMessage().contains("LOW_QPS_HOLD_SECONDS"));
+    assertTrue(lowHoldErr.getMessage().contains("LOW_LOAD_HOLD_SECONDS"));
   }
 
   @Test
@@ -145,7 +145,7 @@ final class QpsControllerTest {
                     true,
                     0,
                     0));
-    assertTrue(err.getMessage().contains("HIGH_QPS_HOLD_SECONDS"));
+    assertTrue(err.getMessage().contains("HIGH_LOAD_HOLD_SECONDS"));
   }
 
   @Test
@@ -163,6 +163,6 @@ final class QpsControllerTest {
                     true,
                     0,
                     0));
-    assertTrue(err.getMessage().contains("LOW_QPS_HOLD_SECONDS"));
+    assertTrue(err.getMessage().contains("LOW_LOAD_HOLD_SECONDS"));
   }
 }

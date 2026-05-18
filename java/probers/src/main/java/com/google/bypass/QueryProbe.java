@@ -14,14 +14,20 @@ public class QueryProbe implements Probe {
   private final int numRows;
   private final String name;
   private final TimestampBound timestampBound;
+  private final int fixedKey;
 
   public QueryProbe(DatabaseClient client, int numRows) {
     this(client, numRows, 0);
   }
 
   public QueryProbe(DatabaseClient client, int numRows, long maxStaleness) {
+    this(client, numRows, maxStaleness, -1);
+  }
+
+  public QueryProbe(DatabaseClient client, int numRows, long maxStaleness, int fixedKey) {
     this.client = client;
     this.numRows = numRows;
+    this.fixedKey = fixedKey;
     this.name = maxStaleness == 0 ? "strong_query" : "stale_query";
     this.timestampBound =
         maxStaleness == 0
@@ -36,7 +42,7 @@ public class QueryProbe implements Probe {
 
   @Override
   public void probe() {
-    int key = (int) (Math.random() * numRows);
+    int key = fixedKey >= 0 ? fixedKey : (int) (Math.random() * numRows);
     Statement s =
         Statement.newBuilder(
                 String.format(
