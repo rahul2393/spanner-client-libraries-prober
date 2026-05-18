@@ -5,3 +5,5 @@
 **/dependency-reduced-pom.xml
 **/bin
 **/.DS_Store
+!java/ycsb/bin
+!java/ycsb/bin/ycsb
