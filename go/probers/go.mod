@@ -57,5 +57,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace cloud.google.com/go/spanner => /tmp/gcgo-metrics-hotpath/spanner
