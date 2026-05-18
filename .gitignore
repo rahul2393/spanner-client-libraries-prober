@@ -95,3 +95,11 @@ coverage.txt
 
 # Local Go binaries
 go/probers/probers
+
+# Track the vendored minimal YCSB tree, even with broad local/global ignores.
+!java/ycsb/bin/
+!java/ycsb/bin/ycsb
+!java/ycsb/pom.xml
+!java/ycsb/checkstyle.xml
+!java/ycsb/**/pom.xml
+!java/ycsb/binding-parent/datastore-specific-descriptor/src/main/resources/assemblies/*.xml
