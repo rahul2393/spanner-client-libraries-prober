@@ -12,22 +12,28 @@ import com.google.cloud.spanner.Statement;
 public class MultiUseReadOnlyQueryProbe implements Probe {
   private final DatabaseClient client;
   private final int numRows;
+  private final boolean inlineBegin;
 
   public MultiUseReadOnlyQueryProbe(DatabaseClient client, int numRows) {
+    this(client, numRows, /* inlineBegin= */ false);
+  }
+
+  public MultiUseReadOnlyQueryProbe(DatabaseClient client, int numRows, boolean inlineBegin) {
     this.client = client;
     this.numRows = numRows;
+    this.inlineBegin = inlineBegin;
   }
 
   @Override
   public String getName() {
-    return "multi_use_ro_query";
+    return inlineBegin ? "multi_use_ro_query_inline_begin" : "multi_use_ro_query";
   }
 
   @Override
   public void probe() {
     int firstKey = (int) (Math.random() * numRows);
     int secondKey = (int) (Math.random() * numRows);
-    try (ReadOnlyTransaction txn = client.readOnlyTransaction()) {
+    try (ReadOnlyTransaction txn = ReadOnlyTransactionFactory.create(client, inlineBegin)) {
       runSingleRead(txn, firstKey);
       runSingleQuery(txn, secondKey);
     }

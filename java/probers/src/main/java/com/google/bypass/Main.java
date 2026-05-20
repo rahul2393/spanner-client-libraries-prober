@@ -65,6 +65,9 @@ final class Main {
       ProbeRunner.LoadMode.parse(envStr("LOAD_MODE", "qps"));
   private static int logIntervalSeconds = envInt("LOG_INTERVAL_SECONDS", 10);
   private static boolean enableBypass = envBool("GOOGLE_SPANNER_EXPERIMENTAL_LOCATION_API", false);
+  private static boolean enableDirectAccess =
+      envBoolAny(
+          new String[] {"GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS", "ENABLE_DIRECT_ACCESS"}, false);
   private static boolean enableGrpcGcp = envBool("ENABLE_GRPC_GCP", true);
   private static boolean enableDynamicChannelPool =
       envBoolAny(
@@ -256,6 +259,7 @@ final class Main {
     System.out.println("Max in-flight: " + maxInflight);
     System.out.println("Log interval seconds: " + logIntervalSeconds);
     System.out.println("Enable bypass: " + enableBypass);
+    System.out.println("Enable direct access: " + enableDirectAccess);
     System.out.println("Enable grpc-gcp: " + enableGrpcGcp);
     System.out.println("Enable dynamic channel pool: " + enableDynamicChannelPool);
     System.out.println("Disable dynamic channel pool: " + disableDynamicChannelPool);
@@ -298,7 +302,8 @@ final class Main {
             .setOpenTelemetry(openTelemetrySdk)
             .setEnableApiTracing(enableSpannerApiTracing)
             .setEnableExtendedTracing(enableSpannerExtendedTracing)
-            .setEnableEndToEndTracing(enableSpannerEndToEndTracing);
+            .setEnableEndToEndTracing(enableSpannerEndToEndTracing)
+            .setEnableDirectAccess(enableDirectAccess);
     if (!enableGrpcGcp) {
       optionsBuilder.disableGrpcGcpExtension();
     }

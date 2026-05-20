@@ -70,6 +70,38 @@ final class ProbeFactoryTest {
     assertEquals(1, probe.getCount(), name);
   }
 
+  @Test
+  void multiUseReadOnlyReadProbeNames() {
+    assertEquals(
+        "multi_use_ro_read",
+        ProbeFactory.create(
+                /* client= */ null,
+                "multi_use_ro_read",
+                /* numRows= */ 10,
+                /* payloadSize= */ 1,
+                /* maxStalenessSeconds= */ 1,
+                "usertable",
+                "",
+                "1",
+                /* ycsbZeroPadding= */ 20,
+                /* fixedKey= */ -1)
+            .getName());
+    assertEquals(
+        "multi_use_ro_read_inline_begin",
+        ProbeFactory.create(
+                /* client= */ null,
+                "multi_use_ro_read_inline_begin",
+                /* numRows= */ 10,
+                /* payloadSize= */ 1,
+                /* maxStalenessSeconds= */ 1,
+                "usertable",
+                "",
+                "1",
+                /* ycsbZeroPadding= */ 20,
+                /* fixedKey= */ -1)
+            .getName());
+  }
+
   private static Probe createTestNoopProbe() {
     return ProbeFactory.create(
         /* client= */ null,
