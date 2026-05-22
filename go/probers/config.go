@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"strconv"
@@ -56,8 +57,10 @@ type config struct {
 	loadMode            loadMode
 	startLoad           float64
 	endLoad             float64
+	loadSteps           []float64
 	stepLoadPercent     float64
 	loadStepInterval    int
+	stepWarmupDiscard   int
 	burstEnabled        bool
 	burstAfterSeconds   int
 	loadCycleEnabled    bool
@@ -95,6 +98,10 @@ type config struct {
 }
 
 func loadConfig() (config, error) {
+	loadSteps, err := parseLoadSteps(getEnv("LOAD_STEPS", ""))
+	if err != nil {
+		return config{}, err
+	}
 	cfg := config{
 		project:             getEnvAny([]string{"SPANNER_PROJECT_ID", "GOOGLE_CLOUD_PROJECT"}, defaultProject),
 		instance:            getEnvAny([]string{"SPANNER_INSTANCE_ID", "SPANNER_INSTANCE"}, defaultInstance),
@@ -107,8 +114,10 @@ func loadConfig() (config, error) {
 		loadMode:            loadMode(strings.ToLower(strings.ReplaceAll(getEnv("LOAD_MODE", string(loadModeQPS)), "-", "_"))),
 		startLoad:           getEnvFloat64Any([]string{"START_LOAD", "LOAD", "START_QPS", "QPS"}, defaultLoad),
 		endLoad:             getEnvFloat64Any([]string{"END_LOAD", "END_QPS"}, 0),
+		loadSteps:           loadSteps,
 		stepLoadPercent:     getEnvFloat64Any([]string{"STEP_LOAD_PERCENT", "STEP_QPS_PERCENT", "STEP_QPS"}, 0),
 		loadStepInterval:    getEnvIntAny([]string{"LOAD_STEP_INTERVAL_SECONDS", "QPS_STEP_INTERVAL_SECONDS", "INTERVAL_SECONDS"}, defaultLoadStepInterval),
+		stepWarmupDiscard:   getEnvIntAny([]string{"STEP_WARMUP_DISCARD_SECONDS", "LOAD_STEP_WARMUP_DISCARD_SECONDS"}, 0),
 		burstEnabled:        getEnvBoolAny([]string{"BURST_ENABLED", "BURST_MODE"}, false),
 		burstAfterSeconds:   getEnvInt("BURST_AFTER_SECONDS", defaultBurstAfterSeconds),
 		loadCycleEnabled:    getEnvBoolAny([]string{"LOAD_CYCLE_ENABLED", "QPS_CYCLE_ENABLED", "CYCLE_ENABLED"}, false),
@@ -147,6 +156,14 @@ func loadConfig() (config, error) {
 	if cfg.databasePath == "" {
 		cfg.databasePath = fmt.Sprintf("projects/%s/instances/%s/databases/%s", cfg.project, cfg.instance, cfg.database)
 	}
+	if len(cfg.loadSteps) > 0 {
+		if cfg.loadSteps[0] > 0 {
+			cfg.startLoad = cfg.loadSteps[0]
+		}
+		if cfg.loadSteps[len(cfg.loadSteps)-1] > 0 {
+			cfg.endLoad = cfg.loadSteps[len(cfg.loadSteps)-1]
+		}
+	}
 	return validateConfig(cfg)
 }
 
@@ -168,19 +185,21 @@ func validateConfig(cfg config) (config, error) {
 		return cfg, fmt.Errorf("STEP_LOAD_PERCENT/STEP_QPS_PERCENT/STEP_QPS must be >= 0, got %f", cfg.stepLoadPercent)
 	case cfg.loadStepInterval <= 0:
 		return cfg, fmt.Errorf("LOAD_STEP_INTERVAL_SECONDS/QPS_STEP_INTERVAL_SECONDS/INTERVAL_SECONDS must be > 0, got %d", cfg.loadStepInterval)
+	case cfg.stepWarmupDiscard < 0:
+		return cfg, fmt.Errorf("STEP_WARMUP_DISCARD_SECONDS must be >= 0, got %d", cfg.stepWarmupDiscard)
 	case cfg.burstAfterSeconds < 0:
 		return cfg, fmt.Errorf("BURST_AFTER_SECONDS must be >= 0, got %d", cfg.burstAfterSeconds)
 	case cfg.highLoadHoldSeconds < 0:
 		return cfg, fmt.Errorf("HIGH_LOAD_HOLD_SECONDS/HIGH_QPS_HOLD_SECONDS must be >= 0, got %d", cfg.highLoadHoldSeconds)
 	case cfg.lowLoadHoldSeconds < 0:
 		return cfg, fmt.Errorf("LOW_LOAD_HOLD_SECONDS/LOW_QPS_HOLD_SECONDS must be >= 0, got %d", cfg.lowLoadHoldSeconds)
-	case cfg.loadCycleEnabled && cfg.endLoad <= cfg.startLoad:
+	case len(cfg.loadSteps) == 0 && cfg.loadCycleEnabled && cfg.endLoad <= cfg.startLoad:
 		return cfg, fmt.Errorf("END_LOAD must be greater than START_LOAD when LOAD_CYCLE_ENABLED=true, got start=%f end=%f", cfg.startLoad, cfg.endLoad)
-	case cfg.loadCycleEnabled && cfg.burstEnabled && cfg.highLoadHoldSeconds <= 0:
+	case len(cfg.loadSteps) == 0 && cfg.loadCycleEnabled && cfg.burstEnabled && cfg.highLoadHoldSeconds <= 0:
 		return cfg, fmt.Errorf("HIGH_LOAD_HOLD_SECONDS must be > 0 for burst LOAD_CYCLE_ENABLED=true")
-	case cfg.loadCycleEnabled && !cfg.burstEnabled && cfg.lowLoadHoldSeconds <= 0:
+	case len(cfg.loadSteps) == 0 && cfg.loadCycleEnabled && !cfg.burstEnabled && cfg.lowLoadHoldSeconds <= 0:
 		return cfg, fmt.Errorf("LOW_LOAD_HOLD_SECONDS must be > 0 for non-burst LOAD_CYCLE_ENABLED=true")
-	case cfg.loadCycleEnabled && !cfg.burstEnabled && cfg.stepLoadPercent <= 0:
+	case len(cfg.loadSteps) == 0 && cfg.loadCycleEnabled && !cfg.burstEnabled && cfg.stepLoadPercent <= 0:
 		return cfg, fmt.Errorf("STEP_LOAD_PERCENT must be > 0 for non-burst LOAD_CYCLE_ENABLED=true")
 	case cfg.numRows <= 0:
 		return cfg, fmt.Errorf("NUM_ROWS must be > 0, got %d", cfg.numRows)
@@ -216,6 +235,18 @@ func validateConfig(cfg config) (config, error) {
 		return cfg, fmt.Errorf("OTEL_TRACE_SAMPLING_FRACTION must be in [0,1], got %f", cfg.otelTraceSamplingFraction)
 	case cfg.otelMetricExportIntervalSecond <= 0:
 		return cfg, fmt.Errorf("OTEL_METRIC_EXPORT_INTERVAL_SECONDS must be > 0, got %d", cfg.otelMetricExportIntervalSecond)
+	case len(cfg.loadSteps) > 0 && cfg.burstEnabled:
+		return cfg, fmt.Errorf("BURST_ENABLED cannot be combined with LOAD_STEPS")
+	case len(cfg.loadSteps) > 0 && cfg.stepLoadPercent > 0:
+		return cfg, fmt.Errorf("STEP_LOAD_PERCENT cannot be combined with LOAD_STEPS")
+	}
+	for _, step := range cfg.loadSteps {
+		switch {
+		case math.IsNaN(step) || math.IsInf(step, 0) || step <= 0:
+			return cfg, fmt.Errorf("LOAD_STEPS values must be finite and > 0, got %f", step)
+		case cfg.loadMode == loadModeConcurrency && step > float64(cfg.maxInflight):
+			return cfg, fmt.Errorf("LOAD_STEPS worker count must be <= MAX_INFLIGHT in LOAD_MODE=concurrency, got step=%f max_inflight=%d", step, cfg.maxInflight)
+		}
 	}
 	switch cfg.queryMode {
 	case "normal", "stats":
@@ -223,6 +254,29 @@ func validateConfig(cfg config) (config, error) {
 		return cfg, fmt.Errorf("QUERY_MODE must be one of [normal, stats], got %q", cfg.queryMode)
 	}
 	return cfg, nil
+}
+
+func parseLoadSteps(raw string) ([]float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+	steps := make([]float64, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		parsed, err := strconv.ParseFloat(field, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid LOAD_STEPS value %q: %w", field, err)
+		}
+		steps = append(steps, parsed)
+	}
+	return steps, nil
 }
 
 func normalizeEndpoint(raw string) string {

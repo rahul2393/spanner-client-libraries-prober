@@ -40,6 +40,8 @@ func newProbe(client *spanner.Client, cfg config) (probe, error) {
 		return &queryProbe{client: client, numRows: cfg.numRows, maxStalenessSeconds: cfg.maxStalenessSeconds, queryMode: cfg.queryMode, fixedKey: cfg.fixedKey}, nil
 	case "multi_use_ro_query":
 		return &multiUseReadOnlyQueryProbe{client: client, numRows: cfg.numRows, queryMode: cfg.queryMode}, nil
+	case "read_large_result_set":
+		return newReadLargeResultSetProbe(client, cfg.numRows), nil
 	case "write":
 		return &writeProbe{client: client, numRows: cfg.numRows, payloadSize: cfg.payloadSize, replayProtection: true}, nil
 	case "write_no_rp":

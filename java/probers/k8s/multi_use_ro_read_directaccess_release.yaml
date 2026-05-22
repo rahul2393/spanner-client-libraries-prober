@@ -19,6 +19,8 @@ spec:
           imagePullPolicy: Always
           command: ["java"]
           args:
+            - -Xms300m
+            - -Xmx300m
             - -XX:-TieredCompilation
             - -XX:CompileThreshold=1000
             - -jar

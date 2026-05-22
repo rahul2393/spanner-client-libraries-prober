@@ -14,13 +14,17 @@ import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.metrics.DoubleHistogram;
 import io.opentelemetry.api.metrics.LongCounter;
+import io.opentelemetry.api.metrics.LongHistogram;
 import io.opentelemetry.api.metrics.Meter;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.metrics.Aggregation;
+import io.opentelemetry.sdk.metrics.InstrumentSelector;
 import io.opentelemetry.sdk.metrics.SdkMeterProvider;
+import io.opentelemetry.sdk.metrics.View;
 import io.opentelemetry.sdk.metrics.export.MetricExporter;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
 import io.opentelemetry.sdk.resources.Resource;
@@ -31,6 +35,7 @@ import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -38,6 +43,9 @@ import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
 
@@ -104,6 +112,36 @@ final class Main {
   private static String ycsbKey = envStr("YCSB_KEY", "");
   private static int ycsbZeroPadding = envInt("YCSB_ZERO_PADDING", 20);
 
+  private static final String JAVA_HEAP_USED_BYTES_METRIC = "java_heap_used_bytes";
+  private static final double MB = 1024.0 * 1024.0;
+  // Same bucketization as the Java memory resource in spanner-client-benchmarks.
+  private static final List<Double> MEMORY_BUCKETS_BYTES =
+      Arrays.asList(
+          2.5 * MB,
+          5.0 * MB,
+          7.5 * MB,
+          10.0 * MB,
+          20.0 * MB,
+          30.0 * MB,
+          40.0 * MB,
+          50.0 * MB,
+          60.0 * MB,
+          70.0 * MB,
+          80.0 * MB,
+          90.0 * MB,
+          100.0 * MB,
+          200.0 * MB,
+          300.0 * MB,
+          400.0 * MB,
+          500.0 * MB,
+          750.0 * MB,
+          1000.0 * MB,
+          1500.0 * MB,
+          2000.0 * MB,
+          3000.0 * MB,
+          5000.0 * MB,
+          10000.0 * MB);
+
   private static final OpenTelemetrySdk openTelemetrySdk = initializeOpenTelemetry();
   private static final Tracer tracer = openTelemetrySdk.getTracer("jloadtest");
   private static final Meter meter = openTelemetrySdk.getMeter("jloadtest");
@@ -143,6 +181,22 @@ final class Main {
           .setUnit("ms")
           .setExplicitBucketBoundariesAdvice(LATENCY_BUCKETS_MS)
           .build();
+
+  private static final LongHistogram javaHeapUsedHistogram =
+      meter
+          .histogramBuilder(JAVA_HEAP_USED_BYTES_METRIC)
+          .ofLongs()
+          .setDescription("Current Java heap memory used by the prober JVM")
+          .setUnit("By")
+          .build();
+
+  private static final ScheduledExecutorService resourceMonitorExecutor =
+      Executors.newSingleThreadScheduledExecutor(
+          runnable -> {
+            Thread thread = new Thread(runnable, "resource-monitor");
+            thread.setDaemon(true);
+            return thread;
+          });
 
   private static final String HOST = getHostName();
 
@@ -423,6 +477,18 @@ final class Main {
         .setDescription("Current cgroup memory usage for the container")
         .setUnit("By")
         .buildWithCallback(measurement -> measurement.record(readContainerMemoryBytes()));
+
+    resourceMonitorExecutor.scheduleAtFixedRate(
+        Main::recordJavaHeapUsedBytes, 0, 10, TimeUnit.SECONDS);
+  }
+
+  private static void recordJavaHeapUsedBytes() {
+    javaHeapUsedHistogram.record(
+        readJavaHeapUsedBytes(), Attributes.of(AttributeKey.stringKey("method"), workload));
+  }
+
+  private static long readJavaHeapUsedBytes() {
+    return ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
   }
 
   private static long readContainerMemoryBytes() {
@@ -463,6 +529,11 @@ final class Main {
     SdkMeterProvider sdkMeterProvider =
         SdkMeterProvider.builder()
             .setResource(resource)
+            .registerView(
+                InstrumentSelector.builder().setName(JAVA_HEAP_USED_BYTES_METRIC).build(),
+                View.builder()
+                    .setAggregation(Aggregation.explicitBucketHistogram(MEMORY_BUCKETS_BYTES))
+                    .build())
             .registerMetricReader(
                 PeriodicMetricReader.builder(metricExporter)
                     .setInterval(Duration.ofSeconds(10))

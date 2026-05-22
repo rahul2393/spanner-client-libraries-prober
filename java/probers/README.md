@@ -107,6 +107,27 @@ Concurrency mode:
 
 For DCP scale-down validation, keep `LOW_LOAD_HOLD_SECONDS` long enough for the Java client scale-down check interval, consecutive low-load checks, and drain idle grace.
 
+## Memory metrics
+
+The prober exports both container and Java heap memory metrics:
+
+| Metric | Meaning |
+| --- | --- |
+| `java_heap_used_bytes` | Histogram that records `ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed()` every 10 seconds; Java heap actually used by live/allocation-retained objects after the current GC state. Uses the same explicit bucket boundaries as `spanner-client-benchmarks` Java memory resource: `2.5MiB`, `5MiB`, `7.5MiB`, `10MiB`, `20MiB`...`100MiB`, `200MiB`, `300MiB`, `400MiB`, `500MiB`, `750MiB`, `1000MiB`, `1500MiB`, `2000MiB`, `3000MiB`, `5000MiB`, `10000MiB`. |
+| `container_memory_bytes` | cgroup memory charged to the container; includes Java heap, non-heap, direct/native memory, stacks, and page cache |
+
+Use `java_heap_used_bytes` for Java application heap comparisons such as inline-begin vs explicit-begin. Use `container_memory_bytes` only for total pod/cgroup footprint.
+
+Kubernetes Java prober manifests set explicit heap sizing so JVM defaults do not mask memory comparisons:
+
+- 400Mi prober pods use `-Xms300m -Xmx300m`.
+- 4Gi DCP prober pods use `-Xms3g -Xmx3g`.
+
+Stale-read directAccess comparison manifests:
+
+- `k8s/stale_read_directaccess_release.yaml`: `release-6.118.0-SNAPSHOT`, `PROBE_TYPE=stale_read`, `QPS=400`.
+- `k8s/stale_read_directaccess_use_channel_affinity.yaml`: `release-use-channel-affinity`, `PROBE_TYPE=stale_read`, `QPS=400`.
+
 DCP stress example:
 
 ```yaml

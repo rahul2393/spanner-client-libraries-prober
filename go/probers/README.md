@@ -45,8 +45,10 @@ The Go runner already uses goroutine-per-probe execution. The dispatcher submits
 | --- | --- | --- |
 | `LOAD` or `START_LOAD` | `4` | Initial target load |
 | `END_LOAD` | `0` | Ramp cap. `0` means no cap |
+| `LOAD_STEPS` | unset | Comma/space-separated explicit target loads. Overrides `START_LOAD`/`END_LOAD` ramp scheduling. Useful for state-of-the-art step-load runs such as concurrency stair-steps. |
 | `STEP_LOAD_PERCENT` or `STEP_QPS` | `0` | Increase target load by this percent every interval |
-| `LOAD_STEP_INTERVAL_SECONDS` or `INTERVAL_SECONDS` | `60` | Ramp interval |
+| `LOAD_STEP_INTERVAL_SECONDS` or `INTERVAL_SECONDS` | `60` | Ramp interval, or hold time for each `LOAD_STEPS` value |
+| `STEP_WARMUP_DISCARD_SECONDS` | `0` | Marks stats logs as `step_warmup=true` until this many seconds after each target-load transition. Use this to filter transient dial/session warmup from plateau charts. |
 | `BURST_ENABLED` or `BURST_MODE` | `false` | Jump to `END_LOAD` after `BURST_AFTER_SECONDS` |
 | `BURST_AFTER_SECONDS` | `900` | Burst delay |
 | `LOAD_CYCLE_ENABLED` or `CYCLE_ENABLED` | `false` | Continuously cycle QPS for scale-up/scale-down testing |
@@ -55,6 +57,10 @@ The Go runner already uses goroutine-per-probe execution. The dispatcher submits
 | `LOAD_MODE` | `qps` | `qps` paces submissions by target load. `concurrency` treats `START_LOAD`/`END_LOAD` as worker counts and treats actual QPS as an output metric |
 | `MAX_INFLIGHT` or `PARALLELISM` | `8` | Max active probe operations |
 | `LOG_INTERVAL_SECONDS` | `10` | Stats log interval |
+
+Stats logs include `step_index`, `step_elapsed_s`, and `step_warmup`. For step-load experiments, plot the OpenTelemetry `glatency` histogram only for rows/metric points with `step_warmup=false` and group by `step_index` plus target workers/QPS.
+
+`LOAD_STEPS` is mutually exclusive with `BURST_ENABLED` and `STEP_LOAD_PERCENT`. If `LOAD_CYCLE_ENABLED=true`, the explicit step list repeats after the last step; otherwise the final step is held until shutdown.
 
 | DCP Env | Default | Meaning |
 | --- | --- | --- |
@@ -110,19 +116,25 @@ env:
     value: "stale_query"
   - name: LOAD_MODE
     value: "concurrency"
-  - name: START_LOAD
-    value: "50"
-  - name: END_LOAD
-    value: "600"
-  - name: STEP_LOAD_PERCENT
-    value: "25"
+  - name: LOAD_STEPS
+    value: "10,50,100,200,400,800,1200,800,400,200,100,50,10"
   - name: LOAD_STEP_INTERVAL_SECONDS
-    value: "60"
+    value: "90"
+  - name: STEP_WARMUP_DISCARD_SECONDS
+    value: "30"
   - name: MAX_INFLIGHT
-    value: "600"
+    value: "1200"
   - name: SPANNER_DCP_ENABLED
     value: "true"
+  - name: SPANNER_DCP_INITIAL_CHANNELS
+    value: "4"
+  - name: SPANNER_DCP_MIN_CHANNELS
+    value: "4"
+  - name: SPANNER_DCP_MAX_CHANNELS
+    value: "256"
 ```
+
+For static-vs-DCP comparison, build one image from mainline with `SPANNER_DCP_ENABLED=false` and one from the DCP branch with the DCP settings above. Treat QPS as an output metric in `LOAD_MODE=concurrency`; this avoids hiding head-of-line blocking behind a QPS controller. The expected signal is static p99 rising sharply around the static channel stream limit while DCP p99 stays flatter and active channel count increases.
 
 Continuous DCP scale-up/scale-down example:
 

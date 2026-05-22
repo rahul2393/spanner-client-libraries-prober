@@ -64,6 +64,37 @@ func TestRampCycleQPSSequence(t *testing.T) {
 	}
 }
 
+func TestExplicitLoadStepsAdvanceTarget(t *testing.T) {
+	cfg := validTestNoopConfig(true)
+	cfg.loadMode = loadModeConcurrency
+	cfg.loadSteps = []float64{2, 4, 1}
+	cfg.loadStepInterval = 1
+	cfg.maxInflight = 4
+	target := newTargetLoad(cfg.loadSteps[0])
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startExplicitLoadSteps(ctx, cfg, target, 25*time.Millisecond)
+
+	time.Sleep(35 * time.Millisecond)
+	if got := targetWorkerCount(target.Load(), cfg); got != 4 {
+		t.Fatalf("target after first explicit step = %d, want 4", got)
+	}
+	stepIndex, _ := target.StepInfo()
+	if stepIndex != 1 {
+		t.Fatalf("step index after first explicit step = %d, want 1", stepIndex)
+	}
+
+	time.Sleep(35 * time.Millisecond)
+	if got := targetWorkerCount(target.Load(), cfg); got != 1 {
+		t.Fatalf("target after second explicit step = %d, want 1", got)
+	}
+	stepIndex, _ = target.StepInfo()
+	if stepIndex != 2 {
+		t.Fatalf("step index after second explicit step = %d, want 2", stepIndex)
+	}
+}
+
 func TestDispatchDelay(t *testing.T) {
 	if got := dispatchDelay(0); got != time.Second {
 		t.Fatalf("dispatchDelay(0) = %s, want 1s", got)

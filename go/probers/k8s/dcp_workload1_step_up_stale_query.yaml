@@ -28,7 +28,6 @@ spec:
               cpu: "4"
             limits:
               memory: "4Gi"
-              cpu: "8"
           env:
             - name: PROBE_TYPE
               value: "stale_query"
@@ -36,28 +35,28 @@ spec:
               value: "12345"
             - name: LOAD_MODE
               value: "concurrency"
-            - name: START_LOAD
-              value: "50"
-            - name: END_LOAD
-              value: "600"
-            - name: STEP_LOAD_PERCENT
-              value: "25"
+            - name: LOAD_STEPS
+              value: "10,50,100,200,300,400,500,400,300,200,100,50,10"
             - name: LOAD_STEP_INTERVAL_SECONDS
+              value: "180"
+            - name: STEP_WARMUP_DISCARD_SECONDS
               value: "60"
             - name: MAX_INFLIGHT
-              value: "600"
+              value: "500"
             - name: SPANNER_DCP_ENABLED
               value: "true"
             - name: SPANNER_DCP_INITIAL_CHANNELS
-              value: "1"
+              value: "4"
             - name: SPANNER_DCP_MIN_CHANNELS
-              value: "1"
+              value: "4"
             - name: SPANNER_DCP_MAX_CHANNELS
-              value: "50"
+              value: "256"
             - name: SPANNER_DCP_MAX_RPC_PER_CHANNEL
               value: "50"
             - name: SPANNER_DCP_MIN_RPC_PER_CHANNEL
               value: "5"
+            - name: SPANNER_DCP_LOAD_LOG_INTERVAL_SECONDS
+              value: "10"
             - name: OTEL_ENABLED
               value: "true"
             - name: OTEL_PROJECT_ID
@@ -71,7 +70,7 @@ spec:
             - name: OTEL_METRIC_EXPORT_INTERVAL_SECONDS
               value: "10"
             - name: OTEL_EXPORT_DEBUG
-              value: "true"
+              value: "false"
 #            - name: GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS
 #              value: "true"
 #            - name: GOOGLE_SPANNER_ENABLE_GCP_FALLBACK

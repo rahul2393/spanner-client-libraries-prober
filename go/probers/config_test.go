@@ -67,6 +67,85 @@ func TestLoadConfigConcurrencyMode(t *testing.T) {
 	}
 }
 
+func TestLoadConfigExplicitLoadSteps(t *testing.T) {
+	t.Setenv("LOAD_MODE", "concurrency")
+	t.Setenv("LOAD_STEPS", "10,50,100,50,10")
+	t.Setenv("MAX_INFLIGHT", "100")
+	t.Setenv("STEP_WARMUP_DISCARD_SECONDS", "30")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig() failed: %v", err)
+	}
+	if got, want := cfg.loadSteps, []float64{10, 50, 100, 50, 10}; len(got) != len(want) {
+		t.Fatalf("loadSteps len = %d, want %d: %v", len(got), len(want), got)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("loadSteps[%d] = %f, want %f; all=%v", i, got[i], want[i], got)
+			}
+		}
+	}
+	if cfg.startLoad != 10 || cfg.endLoad != 10 {
+		t.Fatalf("start/end load = %.1f/%.1f, want first/last explicit step 10/10", cfg.startLoad, cfg.endLoad)
+	}
+	if cfg.stepWarmupDiscard != 30 {
+		t.Fatalf("stepWarmupDiscard = %d, want 30", cfg.stepWarmupDiscard)
+	}
+}
+
+func TestLoadConfigExplicitLoadStepsRejectParseError(t *testing.T) {
+	t.Setenv("LOAD_STEPS", "10,nope,100")
+
+	_, err := loadConfig()
+	if err == nil || !strings.Contains(err.Error(), "invalid LOAD_STEPS value") {
+		t.Fatalf("loadConfig error = %v, want invalid LOAD_STEPS value", err)
+	}
+}
+
+func TestValidateConfigExplicitConcurrencyStepsMustFitMaxInflight(t *testing.T) {
+	_, err := validateConfig(config{
+		loadMode:                       loadModeConcurrency,
+		startLoad:                      10,
+		endLoad:                        10,
+		loadSteps:                      []float64{10, 200},
+		loadStepInterval:               1,
+		numRows:                        1,
+		payloadSize:                    1,
+		maxInflight:                    100,
+		maxStalenessSeconds:            1,
+		logIntervalSeconds:             1,
+		warmupCycles:                   0,
+		otelTraceSamplingFraction:      1,
+		otelMetricExportIntervalSecond: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "LOAD_STEPS worker count") {
+		t.Fatalf("validateConfig error = %v, want LOAD_STEPS worker count validation", err)
+	}
+}
+
+func TestValidateConfigExplicitStepsRejectPercentRamp(t *testing.T) {
+	_, err := validateConfig(config{
+		loadMode:                       loadModeConcurrency,
+		startLoad:                      10,
+		endLoad:                        10,
+		loadSteps:                      []float64{10, 20},
+		stepLoadPercent:                50,
+		loadStepInterval:               1,
+		numRows:                        1,
+		payloadSize:                    1,
+		maxInflight:                    100,
+		maxStalenessSeconds:            1,
+		logIntervalSeconds:             1,
+		warmupCycles:                   0,
+		otelTraceSamplingFraction:      1,
+		otelMetricExportIntervalSecond: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "STEP_LOAD_PERCENT cannot be combined") {
+		t.Fatalf("validateConfig error = %v, want LOAD_STEPS/STEP_LOAD_PERCENT conflict", err)
+	}
+}
+
 func TestValidateConfigConcurrencyWorkersMustFitMaxInflight(t *testing.T) {
 	_, err := validateConfig(config{
 		loadMode:                       loadModeConcurrency,

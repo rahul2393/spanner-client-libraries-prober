@@ -2,20 +2,20 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: spanner-ns
-  name: irahul-muro-read-directaccess-inline
+  name: irahul-stale-read-directaccess-affinity
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: irahul-muro-read-directaccess-inline
+      app: irahul-stale-read-directaccess-affinity
   template:
     metadata:
       labels:
-        app: irahul-muro-read-directaccess-inline
+        app: irahul-stale-read-directaccess-affinity
     spec:
       containers:
-        - name: multi-use-ro-read-inline
-          image: us-central1-docker.pkg.dev/span-cloud-testing/irahul-images/irahul-client:release-inline-multiuse-ro
+        - name: stale-read-directaccess-affinity
+          image: us-central1-docker.pkg.dev/span-cloud-testing/irahul-images/irahul-client:release-use-channel-affinity
           imagePullPolicy: Always
           command: ["java"]
           args:
@@ -28,17 +28,19 @@ spec:
           resources:
             requests:
               memory: "400Mi"
-              cpu: "0.4"
+              cpu: "1"
             limits:
               memory: "400Mi"
-              cpu: "0.4"
+              cpu: "1"
           env:
             - name: PROBE_TYPE
-              value: "multi_use_ro_read_inline_begin"
+              value: "stale_read"
             - name: QPS
-              value: "10"
+              value: "400"
+            - name: MAX_INFLIGHT
+              value: "512"
             - name: OTEL_SERVICE_NAME
-              value: "irahul-muro-read-directaccess-inline"
+              value: "irahul-stale-read-directaccess-affinity"
             - name: OTEL_TRACE_SAMPLING_FRACTION
               value: "0"
             - name: GOOGLE_SPANNER_ENABLE_DIRECT_ACCESS

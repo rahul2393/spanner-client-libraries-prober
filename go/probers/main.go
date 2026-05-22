@@ -61,14 +61,16 @@ func main() {
 }
 
 func printConfig(cfg config) {
-	log.Printf("probe=%s query_mode=%s load_mode=%s start_load=%.2f end_load=%.2f step_load_percent=%.2f load_step_interval_s=%d burst_enabled=%t burst_after_s=%d load_cycle_enabled=%t high_load_hold_s=%d low_load_hold_s=%d max_inflight=%d endpoint=%s insecure=%t db=%s num_rows=%d payload_size=%d fixed_key=%d max_staleness_s=%d direct_access=%t gcp_fallback=%t bypass=%t dcp_enabled=%t dcp_initial=%d dcp_min=%d dcp_max=%d dcp_max_rpc=%.2f dcp_min_rpc=%.2f pprof_enabled=%t pprof_addr=%s otel_enabled=%t otel_service=%s otel_metric_prefix=%s otel_export_debug=%t",
+	log.Printf("probe=%s query_mode=%s load_mode=%s start_load=%.2f end_load=%.2f load_steps=%v step_load_percent=%.2f load_step_interval_s=%d step_warmup_discard_s=%d burst_enabled=%t burst_after_s=%d load_cycle_enabled=%t high_load_hold_s=%d low_load_hold_s=%d max_inflight=%d endpoint=%s insecure=%t db=%s num_rows=%d payload_size=%d fixed_key=%d max_staleness_s=%d direct_access=%t gcp_fallback=%t bypass=%t dcp_enabled=%t dcp_initial=%d dcp_min=%d dcp_max=%d dcp_max_rpc=%.2f dcp_min_rpc=%.2f pprof_enabled=%t pprof_addr=%s otel_enabled=%t otel_service=%s otel_metric_prefix=%s otel_export_debug=%t",
 		cfg.probeType,
 		cfg.queryMode,
 		cfg.loadMode,
 		cfg.startLoad,
 		cfg.endLoad,
+		cfg.loadSteps,
 		cfg.stepLoadPercent,
 		cfg.loadStepInterval,
+		cfg.stepWarmupDiscard,
 		cfg.burstEnabled,
 		cfg.burstAfterSeconds,
 		cfg.loadCycleEnabled,
